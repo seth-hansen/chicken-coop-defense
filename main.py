@@ -14,6 +14,17 @@ FPS = 60
 ASSETS_DIR = "assets"
 BASE_GAME_SPEED = 5.0 # New constant for overall speed increase
 
+# UI Constants
+# SIDEBAR_WIDTH = 150 # Removed
+# SIDEBAR_X = SCREEN_WIDTH - SIDEBAR_WIDTH # Removed
+# SIDEBAR_COLOR = (40, 40, 60, 220) # Removed
+BOTTOM_BAR_HEIGHT = 120 # Height for the bottom build bar
+BOTTOM_BAR_Y = SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT
+BOTTOM_BAR_COLOR = (40, 40, 60, 220) # Same color as old sidebar
+
+UPGRADE_PANEL_WIDTH = 300
+UPGRADE_PANEL_X = SCREEN_WIDTH - UPGRADE_PANEL_WIDTH - 20 # Keep upgrade panel on right
+
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -128,6 +139,7 @@ selected_tower = None # Track the currently selected tower
 
 # Upgrade Button Rects (will be calculated later)
 upgrade_button_rects = {}
+bottom_bar_button_rects = {} # New dictionary for bottom bar
 
 # Wave Settings
 TIME_BETWEEN_WAVES = 10 * FPS
@@ -345,6 +357,48 @@ def draw_upgrade_panel(tower):
     sell_rect = sell_surf.get_rect(center=sell_btn_rect.center)
     screen.blit(sell_surf, sell_rect)
 
+def draw_build_bar():
+    """Draws the build bar at the bottom of the screen."""
+    global bottom_bar_button_rects
+    bottom_bar_button_rects = {}
+
+    bar_rect = pygame.Rect(0, BOTTOM_BAR_Y, SCREEN_WIDTH, BOTTOM_BAR_HEIGHT)
+    bar_surf = pygame.Surface(bar_rect.size, pygame.SRCALPHA)
+    bar_surf.fill(BOTTOM_BAR_COLOR)
+    screen.blit(bar_surf, bar_rect.topleft)
+    pygame.draw.rect(screen, WHITE, bar_rect, 1) # Border
+
+    # --- Add Tower Build Options --- #
+    # For now, only one tower type
+    tower_icon = tower_img # Use the loaded (scaled) tower image
+    tower_cost = Tower(0, 0, tower_img).base_cost
+    icon_size = 80
+    padding = (BOTTOM_BAR_HEIGHT - icon_size) // 2 # Center vertically
+    icon_x = padding # Start with padding from the left
+    icon_y = BOTTOM_BAR_Y + padding
+
+    # Use the already scaled tower_img as the icon
+    icon_rect = tower_icon.get_rect(topleft=(icon_x, icon_y))
+
+    # Highlight if this tower type is being previewed
+    is_previewing_this = (preview_tower is not None) # Simple check for now
+    if is_previewing_this:
+        pygame.draw.rect(screen, YELLOW, icon_rect.inflate(6, 6), 3, border_radius=5)
+
+    screen.blit(tower_icon, icon_rect)
+    bottom_bar_button_rects['chicken_tower'] = icon_rect # Use a key
+
+    # Draw cost below icon
+    cost_text = f"${tower_cost}"
+    cost_font = pygame.font.Font(None, 28)
+    cost_surf = cost_font.render(cost_text, True, YELLOW if player_gold >= tower_cost else GRAY)
+    cost_pos_x = icon_rect.centerx
+    cost_pos_y = icon_rect.bottom + 2
+    cost_rect = cost_surf.get_rect(midtop=(cost_pos_x, cost_pos_y))
+    screen.blit(cost_surf, cost_rect)
+
+    # Add more tower types here later by increasing icon_x...
+
 def draw_tiled_background_and_path(path_width=40): # Width of the dirt path
     """Tiles the background and draws the path using path_tile."""
     # Tile the main background
@@ -371,49 +425,53 @@ while running:
             pygame.quit()
             sys.exit()
 
-        # Keyboard Input
         if event.type == pygame.KEYDOWN:
-            if state == MENU:
-                if event.key == pygame.K_UP:
-                    selected_option = (selected_option - 1) % len(menu_options)
-                elif event.key == pygame.K_DOWN:
-                    selected_option = (selected_option + 1) % len(menu_options)
-                elif event.key == pygame.K_RETURN:
-                    selected_difficulty = menu_options[selected_option]
-                    state = GAME
-                    reset_game_state()
+            if state == GAME:
+                if event.key == pygame.K_f: time_scale = min(time_scale * 2, 16.0)
+                elif event.key == pygame.K_s: time_scale = max(1.0, time_scale / 2)
+                elif event.key == pygame.K_ESCAPE:
+                     if preview_tower: preview_tower = None; print("Build cancelled.")
+                     elif selected_tower: selected_tower = None; print("Tower deselected.")
+            elif state == GAME_OVER and event.key == pygame.K_RETURN: state = MENU
+            elif state == MENU: # Menu navigation
+                if event.key == pygame.K_UP: selected_option = (selected_option - 1) % len(menu_options)
+                elif event.key == pygame.K_DOWN: selected_option = (selected_option + 1) % len(menu_options)
+                elif event.key == pygame.K_RETURN: state = GAME; reset_game_state()
 
-            elif state == GAME:
-                if event.key == pygame.K_b: # Toggle build mode
-                    build_mode = not build_mode
-                    if build_mode:
-                        preview_tower = Tower(mouse_pos[0], mouse_pos[1], tower_img)
-                    else:
-                        preview_tower = None
-                elif event.key == pygame.K_f: # Increase speed
-                    time_scale = min(time_scale * 2, 16.0) # Cap at 16x
-                    print(f"Time Scale set to: {time_scale}x")
-                elif event.key == pygame.K_s: # Decrease speed (or reset to 1x)
-                    if time_scale > 1.0:
-                        # Halve speed, ensuring it doesn't go below 1.0 due to floating point
-                        time_scale = max(1.0, time_scale / 2)
-                    else:
-                        time_scale = 1.0
-                    print(f"Time Scale set to: {time_scale}x")
-
-            elif state == GAME_OVER:
-                if event.key == pygame.K_RETURN:
-                    state = MENU
-
-        # Mouse Input
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if event.button == 1: # Left Click
-                clicked_on_ui = False
-                # Check Upgrade/Sell Panel Buttons First
-                if selected_tower:
+            clicked_handled = False
+            # --- Left Click --- #
+            if event.button == 1:
+                # 1. Check Bottom Bar Buttons
+                current_preview_type = None # Track what type we are currently previewing
+                if preview_tower: # If already previewing, maybe store its type?
+                    # For now assume only one type, so preview_tower existing means we are previewing 'chicken_tower'
+                    current_preview_type = 'chicken_tower'
+
+                for tower_key, rect in bottom_bar_button_rects.items():
+                    if rect.collidepoint(mouse_pos):
+                        clicked_handled = True
+                        temp_tower = Tower(0, 0, tower_img) # Assuming chicken_tower
+                        cost = temp_tower.base_cost
+                        if player_gold >= cost:
+                            # If already building THIS tower type, cancel.
+                            if current_preview_type == tower_key:
+                                 preview_tower = None
+                                 print(f"Cancelled building {tower_key}")
+                            # Otherwise, start building this type.
+                            else:
+                                preview_tower = Tower(mouse_pos[0], mouse_pos[1], tower_img)
+                                selected_tower = None
+                                print(f"Started building {tower_key}")
+                        else:
+                            print(f"Not enough gold for {tower_key} (${cost})")
+                        break
+
+                # 2. Check Upgrade Panel Buttons
+                if not clicked_handled and selected_tower:
                     for button_type, rect in upgrade_button_rects.items():
                         if rect.collidepoint(mouse_pos):
-                            clicked_on_ui = True
+                            clicked_handled = True
                             if button_type == 'sell':
                                 # Sell the tower
                                 sell_value = selected_tower.get_sell_value()
@@ -442,32 +500,43 @@ while running:
                                 # else: Should not happen
                             break # Stop checking buttons
 
-                # If not clicking UI, check game elements (Placement/Selection)
-                if not clicked_on_ui:
-                    if state == GAME:
-                        if build_mode and preview_tower:
-                            # Try to place tower
+                # 3. Check Game Area Clicks
+                if not clicked_handled and state == GAME:
+                    if preview_tower:
+                        if mouse_pos[1] < BOTTOM_BAR_Y:
                             can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
                             if can_place:
                                 towers.append(Tower(mouse_pos[0], mouse_pos[1], tower_img))
                                 player_gold -= preview_tower.cost
+                                preview_tower = None # Exit build mode after placement
+                                print("Placed tower.")
                             else:
-                                print("Cannot place tower: Invalid location or insufficient gold.")
-                            # De-select any selected tower when attempting placement
-                            selected_tower = None
+                                print("Cannot place tower here (Invalid location or insufficient gold).")
                         else:
-                            # Not in build mode, try selecting a tower
+                             print("Cannot place tower in UI area.")
+                    # If not building, try selecting existing tower
+                    else:
+                        # Check if click is outside the bottom bar area
+                        if mouse_pos[1] < BOTTOM_BAR_Y:
                             clicked_tower = None
                             for tower in towers:
                                 if tower.rect.collidepoint(mouse_pos):
                                     clicked_tower = tower
                                     break
-                            selected_tower = clicked_tower
+                            # Toggle selection
+                            if clicked_tower and clicked_tower == selected_tower:
+                                selected_tower = None # Deselect if clicking selected tower again
+                            else:
+                                selected_tower = clicked_tower # Select new or different tower
                             if selected_tower:
                                 print(f"Selected Tower at {selected_tower.rect.center}")
-                            # If clicking empty space, deselect tower
-                            if not selected_tower:
-                                 selected_tower = None
+                        else:
+                            selected_tower = None # Clicking UI deselects tower
+
+            # --- Right Click --- #
+            elif event.button == 3:
+                 if preview_tower: preview_tower = None; print("Build cancelled.")
+                 elif selected_tower: selected_tower = None; print("Tower deselected.")
 
     # --- State Logic & Updates (Apply time_scale * BASE_GAME_SPEED) ---
     if state == GAME:
@@ -537,20 +606,29 @@ while running:
         for proj in projectiles:
             proj.draw(screen)
 
-        # Draw Preview Tower
-        if build_mode and preview_tower:
+        # Draw Build Bottom Bar (Call the new function)
+        draw_build_bar()
+
+        # Draw Preview Tower (if building - UPDATED VISUALS)
+        if preview_tower:
+            # Update preview tower position to follow mouse
+            preview_tower.x, preview_tower.y = mouse_pos
+            preview_tower.rect.center = mouse_pos
+
+            # Determine validity and color
             can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
-            color = GREEN if can_place else RED
-            # Draw semi-transparent range
+            tint_color = (0, 100, 255, 150) if can_place else (255, 0, 0, 150) # Blue or Red semi-transparent
+
+            # Draw semi-transparent range circle
             range_surface = pygame.Surface((preview_tower.range * 2, preview_tower.range * 2), pygame.SRCALPHA)
-            pygame.draw.circle(range_surface, (*color, 50), (preview_tower.range, preview_tower.range), preview_tower.range)
+            range_circle_color = (tint_color[0], tint_color[1], tint_color[2], 50) # Lighter alpha for range
+            pygame.draw.circle(range_surface, range_circle_color, (preview_tower.range, preview_tower.range), preview_tower.range)
             screen.blit(range_surface, (preview_tower.rect.centerx - preview_tower.range, preview_tower.rect.centery - preview_tower.range))
-            # Draw tower image preview (centered)
-            img_rect = preview_tower.image.get_rect(center=preview_tower.rect.center)
-            # Optional: tint the image red/green based on validity
+
+            # Draw tinted tower image preview (centered)
             preview_img_copy = preview_tower.image.copy()
-            tint_color = (*color, 150) # Add alpha for tinting effect
-            preview_img_copy.fill(tint_color, special_flags=pygame.BLEND_RGBA_MULT)
+            preview_img_copy.fill(tint_color, special_flags=pygame.BLEND_RGBA_MULT) # Apply tint
+            img_rect = preview_img_copy.get_rect(center=preview_tower.rect.center)
             screen.blit(preview_img_copy, img_rect)
 
         # Draw UI
