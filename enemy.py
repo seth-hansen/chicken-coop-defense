@@ -57,10 +57,69 @@ class Enemy:
         self.reward += (wave_number // 5)
         self.points_value += (wave_number - 1)
 
+        # Status Effects
+        self.dot_effects = [] # List of tuples: (damage_per_second, remaining_seconds, original_duration)
+        self.is_burning = False # For visual indicator
+
+    def apply_dot(self, damage_per_second, duration_seconds):
+        """Adds a new DoT effect or refreshes the strongest one."""
+        # Find if an existing effect has the same source/type (optional)
+        # For now, just add or refresh based on damage strength
+
+        # Check if there's an existing stronger or equal DoT
+        # if any(existing_dps >= damage_per_second for existing_dps, _, _ in self.dot_effects):
+        #     print("  Existing stronger DoT effect present, not applying new one.")
+        #     return # Don't apply weaker or equal DoT
+
+        # Simple approach: Add new effect, let update handle it (allows stacking)
+        # OR: Keep only the strongest (prevents stacking)
+        # Let's try keeping the strongest for simplicity:
+        if not self.dot_effects or damage_per_second > self.dot_effects[0][0]:
+            self.dot_effects = [(damage_per_second, duration_seconds, duration_seconds)]
+            self.is_burning = True
+            print(f"  Applying new strongest DoT ({damage_per_second:.1f} dps)")
+        elif damage_per_second == self.dot_effects[0][0]:
+            # Refresh duration of the current strongest effect
+            self.dot_effects[0] = (damage_per_second, duration_seconds, duration_seconds)
+            self.is_burning = True
+            print(f"  Refreshing DoT duration ({damage_per_second:.1f} dps)")
+        # Else: Weaker DoT, ignore
+
+    def update_effects(self, dt_seconds):
+        """Updates timers and applies damage for active DoT effects."""
+        if not self.dot_effects:
+            self.is_burning = False
+            return
+
+        remaining_effects = []
+        total_dot_this_frame = 0
+
+        for dps, remaining_sec, original_dur in self.dot_effects:
+            damage_this_tick = dps * dt_seconds
+            total_dot_this_frame += damage_this_tick
+            new_remaining_sec = remaining_sec - dt_seconds
+
+            if new_remaining_sec > 0:
+                remaining_effects.append((dps, new_remaining_sec, original_dur))
+            # else: Effect expired
+
+        self.dot_effects = remaining_effects
+        self.is_burning = bool(self.dot_effects)
+
+        if total_dot_this_frame > 0:
+            # Apply damage as float
+            self.health -= total_dot_this_frame
+            if self.health <= 0:
+                self.is_dead = True
+
     def move(self, time_scale=1.0):
-        if self.is_dead: return False
+        # Call update_effects first
+        self.update_effects((1/60) * time_scale)
+        if self.is_dead: return False # Check if DoT killed it
+
+        # Damage flash timer
         if self.damage_taken_timer > 0:
-            self.damage_taken_timer -= 1
+            self.damage_taken_timer -= 1 # Flash always ticks at normal rate?
 
         reached_end = False
         move_distance = self.speed * time_scale
@@ -96,23 +155,30 @@ class Enemy:
 
     def die(self, killed_by_player=True):
         if not self.is_dead:
+            self.is_dead = True
+            self.is_burning = False # Stop burning effect on death
+            self.dot_effects.clear() # Clear DoTs on death
             if killed_by_player:
                 print(f"{self.enemy_type.capitalize()} defeated! (Wave Scaled)")
-            self.is_dead = True
 
     def draw(self, screen):
-        screen.blit(self.image, self.rect)
-        if self.health < self.max_health:
-            bar_width = self.rect.width * 0.8
-            bar_height = 5
-            health_pct = self.health / self.max_health
-            fill_width = bar_width * health_pct
-            health_bar_rect = pygame.Rect(0, 0, bar_width, bar_height)
-            health_bar_rect.midbottom = self.rect.midtop - pygame.Vector2(0, 5)
-            fill_rect = pygame.Rect(health_bar_rect.left, health_bar_rect.top, fill_width, bar_height)
-            pygame.draw.rect(screen, (255,0,0), health_bar_rect)
-            pygame.draw.rect(screen, (0,255,0), fill_rect)
-        if self.damage_taken_timer > 0:
+        screen.blit(self.image, self.rect.topleft)
+        # Draw health bar
+        health_bar_width = self.rect.width
+        health_bar_height = 5
+        health_bar_x = self.rect.x
+        health_bar_y = self.rect.y - health_bar_height - 2
+        current_health_ratio = max(0, self.health / self.max_health)
+        pygame.draw.rect(screen, (255,0,0), (health_bar_x, health_bar_y, health_bar_width, health_bar_height))
+        pygame.draw.rect(screen, (0,255,0), (health_bar_x, health_bar_y, int(health_bar_width * current_health_ratio), health_bar_height))
+
+        # Draw burning effect if applicable
+        if self.is_burning:
+            # Simple tint: Make the enemy orange-ish
+            burn_surface = self.image.copy()
+            burn_surface.fill((255, 100, 0, 150), special_flags=pygame.BLEND_RGBA_MULT)
+            screen.blit(burn_surface, self.rect.topleft)
+        elif self.damage_taken_timer > 0:
             flash_surface = self.image.copy()
             flash_surface.fill((255, 255, 255, 100), special_flags=pygame.BLEND_RGBA_MULT)
-            screen.blit(flash_surface, self.rect) 
+            screen.blit(flash_surface, self.rect.topleft) 

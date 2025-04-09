@@ -15,12 +15,13 @@ ASSETS_DIR = "assets"
 BASE_GAME_SPEED = 5.0 # New constant for overall speed increase
 
 # UI Constants
-# SIDEBAR_WIDTH = 150 # Removed
-# SIDEBAR_X = SCREEN_WIDTH - SIDEBAR_WIDTH # Removed
-# SIDEBAR_COLOR = (40, 40, 60, 220) # Removed
-BOTTOM_BAR_HEIGHT = 120 # Height for the bottom build bar
+# # SIDEBAR_WIDTH = 150 # Removed
+# # SIDEBAR_X = SCREEN_WIDTH - SIDEBAR_WIDTH # Removed
+# # SIDEBAR_COLOR = (40, 40, 60, 220) # Removed
+BOTTOM_BAR_HEIGHT = 150 # Increased from 120
 BOTTOM_BAR_Y = SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT
 BOTTOM_BAR_COLOR = (40, 40, 60, 220) # Same color as old sidebar
+PLAYABLE_HEIGHT = SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT # Define the area above the bottom bar
 
 UPGRADE_PANEL_WIDTH = 300
 UPGRADE_PANEL_X = SCREEN_WIDTH - UPGRADE_PANEL_WIDTH - 20 # Keep upgrade panel on right
@@ -90,11 +91,11 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption('Chicken Coop Defense') # Updated Title
 clock = pygame.time.Clock()
 
-# Fonts
+# Fonts (Can be loaded after init)
 ui_font = pygame.font.Font(None, 36)
 game_font = pygame.font.Font(None, 90) # Larger font for larger screen
 
-# Load Game Assets
+# --- Load Game Assets (AFTER display init) ---
 background_tile = load_image("grass.png", default_color=GREEN, alpha=False)
 path_tile = load_image("dirt.png", default_color=PATH_COLOR, alpha=False)
 
@@ -114,6 +115,13 @@ ENEMY_IMAGES = {}
 for enemy_type, fallback_color in [('raccoon', GRAY), ('cat', (200, 150, 100))]:
     raw_img = load_image(f"{enemy_type}.png", default_color=fallback_color)
     ENEMY_IMAGES[enemy_type] = scale_image_aspect_ratio(raw_img, target_width=ENEMY_TARGET_WIDTH)
+
+# --- Define Tower Types (AFTER assets are loaded) ---
+TOWER_TYPES = { # Store info about available tower types
+    'basic': {'name': 'Basic Chicken', 'cost': Tower.BASE_STATS['basic']['cost'], 'icon': tower_img},
+    'bomb':  {'name': 'Bomb Chicken',  'cost': Tower.BASE_STATS['bomb']['cost'],  'icon': tower_img},
+    'fire':  {'name': 'Fire Chicken',  'cost': Tower.BASE_STATS['fire']['cost'],  'icon': tower_img},
+}
 
 # --- Game Variables (initialized globally, reset in functions) ---
 state = MENU
@@ -148,6 +156,10 @@ SPAWN_INTERVAL = 1.5 * FPS
 # Menu options
 menu_options = ['Easy', 'Medium', 'Hard']
 
+# --- Game Variables ---
+# ... (state, difficulty, lists, timers etc.)
+# ...
+
 # --- Helper Functions ---
 def reset_game_state():
     """Resets all variables for a new game."""
@@ -158,8 +170,8 @@ def reset_game_state():
     towers = []
     enemies = []
     projectiles = []
-    current_path = get_path(SCREEN_WIDTH, SCREEN_HEIGHT)
-    player_gold = 150
+    current_path = get_path(SCREEN_WIDTH, PLAYABLE_HEIGHT)
+    player_gold = 200
     player_health = difficulty_health[selected_difficulty]
     score = 0
     wave_number = 0 # Start at wave 0, will increment to 1 immediately
@@ -174,8 +186,16 @@ def reset_game_state():
     start_next_wave() # Prepare the first wave
 
 def start_next_wave():
-    """Sets up variables for the next wave."""
-    global wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave, wave_timer
+    """Sets up variables for the next wave and awards end-of-wave gold."""
+    global wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave, wave_timer, player_gold
+
+    # Award gold for completing the previous wave (if wave_number > 0)
+    if wave_number > 0:
+        end_of_wave_bonus = 50
+        player_gold += end_of_wave_bonus
+        print(f"Wave {wave_number} cleared! +${end_of_wave_bonus} gold.")
+
+    # Prepare next wave
     wave_number += 1
     enemies_to_spawn_this_wave = 5 + wave_number * 2 # Example: Increase enemies per wave
     enemies_spawned_this_wave = 0
@@ -281,72 +301,93 @@ def draw_game_ui():
         draw_upgrade_panel(selected_tower)
 
 def draw_upgrade_panel(tower):
-    """Draws the upgrade panel for the selected tower."""
+    """Draws the upgrade panel, adapting for different tower type paths."""
     global upgrade_button_rects
     upgrade_button_rects = {}
-    panel_width = 300
-    panel_height = 280
-    panel_x = SCREEN_WIDTH - panel_width - 20
+    panel_width = 350 # Increased from 300
+    panel_height = 320 # Keep height for now
+    panel_x = SCREEN_WIDTH - panel_width - 20 # Adjust X based on new width
     panel_y = 20
     panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
     panel_surf = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
     panel_surf.fill((50, 50, 50, 210))
     screen.blit(panel_surf, panel_rect.topleft)
     pygame.draw.rect(screen, WHITE, panel_rect, 2)
-    panel_font = pygame.font.Font(None, 40)
+    panel_font = pygame.font.Font(None, 36) # Decreased from 40
     button_font = pygame.font.Font(None, 36)
-    y_offset = panel_y + 15
-    stats = [
-        (f"Range: {tower.range}", f"Lvl {tower.range_level}", 'range'),
-        (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
-        (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
-    ]
+    small_font = pygame.font.Font(None, 28)
+
+    # Tower Type Name
+    type_name = TOWER_TYPES.get(tower.tower_type, {}).get('name', 'Unknown Tower')
+    type_surf = small_font.render(type_name, True, CYAN)
+    type_rect = type_surf.get_rect(centerx=panel_rect.centerx, top=panel_rect.top + 8)
+    screen.blit(type_surf, type_rect)
+
+    y_offset = panel_y + 40
+
+    # Determine stats to display based on tower type
+    stats_to_display = []
+    if tower.tower_type == 'basic':
+        stats_to_display = [
+            (f"Range: {tower.range}", f"Lvl {tower.range_level}", 'range'),
+            (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
+            (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
+        ]
+    elif tower.tower_type == 'bomb':
+        stats_to_display = [
+            (f"AoE: {tower.aoe_radius}", f"Lvl {tower.aoe_level}", 'aoe'), # Changed path
+            (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
+            (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
+        ]
+    elif tower.tower_type == 'fire':
+        dot_duration_sec = tower.dot_duration / FPS # Convert duration frames to seconds
+        stats_to_display = [
+            (f"Duration: {dot_duration_sec:.1f}s", f"Lvl {tower.duration_level}", 'duration'), # Changed path
+            (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
+            (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
+        ]
+
     button_width = 90
     button_height = 40
-    button_x = panel_x + panel_width - button_width - 15
-    label_x = panel_x + 15
+    button_x = panel_x + panel_width - button_width - 15 # Adjust button X for wider panel
+    label_x = panel_x + 15 # Keep label X same?
+    level_text_offset = 160 # Increased offset for level text (from 140)
 
-    for i, (stat_text, level_text, stat_type) in enumerate(stats):
+    for i, (stat_text, level_text, stat_type) in enumerate(stats_to_display):
         text = panel_font.render(stat_text, True, WHITE)
         screen.blit(text, (label_x, y_offset))
         level_t = panel_font.render(level_text, True, GRAY)
-        screen.blit(level_t, (label_x + 140, y_offset))
+        screen.blit(level_t, (label_x + level_text_offset, y_offset)) # Use new offset
 
         cost = tower.get_upgrade_cost(stat_type)
         button_y = y_offset + text.get_height() // 2 - button_height // 2 + 5
         btn_rect = pygame.Rect(button_x, button_y, button_width, button_height)
         upgrade_button_rects[stat_type] = btn_rect
 
-        # Determine Button State/Text based on cost result
-        if cost == -1:
-            # Max Level
-            btn_color = GRAY
-            button_text = "MAX"
-            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+        # --- Determine button state (Max/Locked/Cost) ---
+        max_level_for_path = Tower.SPECIAL_PATH_MAX_LEVEL if stat_type in {'aoe', 'duration'} else Tower.MAX_LEVEL
+        current_level = getattr(tower, stat_type + '_level', 0)
+
+        if cost == -1 or current_level >= max_level_for_path:
+            btn_color = GRAY; button_text = "MAX"
         elif cost == -2:
-            # Locked by specialization
-            btn_color = (40, 40, 40) # Dark Gray
-            button_text = "Locked"
-            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+            btn_color = (40, 40, 40); button_text = "Locked"
         else:
-            # Available or Unaffordable
             can_afford = player_gold >= cost
             btn_color = GREEN if can_afford else RED
             button_text = f"${cost}"
-            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
-
-        # Draw Button Text
-        button_surf = button_font.render(button_text, True, BLACK if cost >= 0 else WHITE)
+        # --- Render Button --- 
+        pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+        button_surf = button_font.render(button_text, True, BLACK if cost >= 0 and cost != -2 else WHITE) # White text for MAX/Locked
         button_text_rect = button_surf.get_rect(center=btn_rect.center)
         screen.blit(button_surf, button_text_rect)
-
         y_offset += 50
 
     # Sell Button
     y_offset += 15
     sell_value = tower.get_sell_value()
     sell_button_text = f"Sell ${sell_value}"
-    sell_button_width = panel_width - 30
+    sell_button_width = panel_width - 30 # Adjust width to fit new panel size
     sell_button_height = 45
     sell_button_x = panel_x + 15
     sell_button_y = y_offset
@@ -358,59 +399,85 @@ def draw_upgrade_panel(tower):
     screen.blit(sell_surf, sell_rect)
 
 def draw_build_bar():
-    """Draws the build bar at the bottom of the screen."""
+    """Draws the build bar with multiple tower types."""
     global bottom_bar_button_rects
     bottom_bar_button_rects = {}
-
     bar_rect = pygame.Rect(0, BOTTOM_BAR_Y, SCREEN_WIDTH, BOTTOM_BAR_HEIGHT)
     bar_surf = pygame.Surface(bar_rect.size, pygame.SRCALPHA)
     bar_surf.fill(BOTTOM_BAR_COLOR)
     screen.blit(bar_surf, bar_rect.topleft)
-    pygame.draw.rect(screen, WHITE, bar_rect, 1) # Border
+    pygame.draw.rect(screen, WHITE, bar_rect, 1)
 
-    # --- Add Tower Build Options --- #
-    # For now, only one tower type
-    tower_icon = tower_img # Use the loaded (scaled) tower image
-    tower_cost = Tower(0, 0, tower_img).base_cost
-    icon_size = 80
-    padding = (BOTTOM_BAR_HEIGHT - icon_size) // 2 # Center vertically
-    icon_x = padding # Start with padding from the left
-    icon_y = BOTTOM_BAR_Y + padding
+    target_icon_size = 70 # The maximum dimension for the icon
+    padding = (BOTTOM_BAR_HEIGHT - target_icon_size - 25) // 2 # Keep overall padding
+    slot_y = BOTTOM_BAR_Y + padding # Top position for the icon slot
+    current_slot_x = padding # Left position for the current icon slot
+    cost_font = pygame.font.Font(None, 24)
+    name_font = pygame.font.Font(None, 20)
 
-    # Use the already scaled tower_img as the icon
-    icon_rect = tower_icon.get_rect(topleft=(icon_x, icon_y))
+    for tower_key, info in TOWER_TYPES.items():
+        tower_icon = info['icon']
+        tower_cost = info['cost']
+        tower_name = info['name']
 
-    # Highlight if this tower type is being previewed
-    is_previewing_this = (preview_tower is not None) # Simple check for now
-    if is_previewing_this:
-        pygame.draw.rect(screen, YELLOW, icon_rect.inflate(6, 6), 3, border_radius=5)
+        # --- Aspect Ratio Scaling --- #
+        original_w, original_h = tower_icon.get_size()
+        if original_w == 0 or original_h == 0: continue # Skip if image invalid
+        ratio = min(target_icon_size / original_w, target_icon_size / original_h)
+        new_w = int(original_w * ratio)
+        new_h = int(original_h * ratio)
+        icon_display = pygame.transform.smoothscale(tower_icon, (new_w, new_h))
+        # --- End Scaling --- #
 
-    screen.blit(tower_icon, icon_rect)
-    bottom_bar_button_rects['chicken_tower'] = icon_rect # Use a key
+        # --- Positioning --- #
+        # Center the scaled icon within the conceptual square slot
+        slot_center_x = current_slot_x + target_icon_size / 2
+        slot_center_y = slot_y + target_icon_size / 2
+        icon_rect = icon_display.get_rect(center=(slot_center_x, slot_center_y))
+        # --- End Positioning --- #
 
-    # Draw cost below icon
-    cost_text = f"${tower_cost}"
-    cost_font = pygame.font.Font(None, 28)
-    cost_surf = cost_font.render(cost_text, True, YELLOW if player_gold >= tower_cost else GRAY)
-    cost_pos_x = icon_rect.centerx
-    cost_pos_y = icon_rect.bottom + 2
-    cost_rect = cost_surf.get_rect(midtop=(cost_pos_x, cost_pos_y))
-    screen.blit(cost_surf, cost_rect)
+        # Store the rect of the actual displayed icon for click detection
+        bottom_bar_button_rects[tower_key] = icon_rect
 
-    # Add more tower types here later by increasing icon_x...
+        # Draw selection highlight around the slot
+        is_previewing_this = (preview_tower is not None and preview_tower.tower_type == tower_key)
+        if is_previewing_this:
+            # Draw highlight around the conceptual slot boundary
+            highlight_rect = pygame.Rect(current_slot_x, slot_y, target_icon_size, target_icon_size)
+            pygame.draw.rect(screen, YELLOW, highlight_rect.inflate(6, 6), 3, border_radius=5)
 
-def draw_tiled_background_and_path(path_width=40): # Width of the dirt path
-    """Tiles the background and draws the path using path_tile."""
-    # Tile the main background
+        screen.blit(icon_display, icon_rect) # Blit the potentially non-square icon
+
+        # Position Name/Cost relative to the displayed icon's bottom-center
+        name_surf = name_font.render(tower_name, True, WHITE)
+        name_rect = name_surf.get_rect(midtop=(icon_rect.centerx, icon_rect.bottom + 2))
+        screen.blit(name_surf, name_rect)
+        cost_text = f"${tower_cost}"
+        cost_surf = cost_font.render(cost_text, True, YELLOW if player_gold >= tower_cost else GRAY)
+        cost_rect = cost_surf.get_rect(midtop=(icon_rect.centerx, name_rect.bottom + 1))
+        screen.blit(cost_surf, cost_rect)
+
+        # Move to the next slot position
+        current_slot_x += target_icon_size + padding + 10 # Use target size for spacing
+
+def draw_tiled_background_and_path(path_width=40):
+    """Tiles the background and draws the path only within the playable area."""
+    # Tile the main background up to PLAYABLE_HEIGHT
     bg_w, bg_h = background_tile.get_size()
-    for y in range(0, SCREEN_HEIGHT, bg_h):
+    for y in range(0, PLAYABLE_HEIGHT, bg_h):
         for x in range(0, SCREEN_WIDTH, bg_w):
-            screen.blit(background_tile, (x, y))
+            # Check if tile bottom is above PLAYABLE_HEIGHT before blitting
+            if y + bg_h <= PLAYABLE_HEIGHT:
+                 screen.blit(background_tile, (x, y))
+            else:
+                 # Draw partial tile if it overlaps the boundary
+                 clip_height = PLAYABLE_HEIGHT - y
+                 if clip_height > 0:
+                      screen.blit(background_tile, (x, y), (0, 0, bg_w, clip_height))
 
-    # Draw the path - Simplified: Use thick lines for now to verify path logic
+    # Draw the path (path points are already constrained to playable area)
     if len(current_path) > 1:
-        pygame.draw.lines(screen, PATH_COLOR, False, current_path, path_width * 2) # Draw wide path lines
-        # TODO: Re-implement path tiling if needed, ensuring correct texture coords and blending
+        pygame.draw.lines(screen, PATH_COLOR, False, current_path, path_width * 2)
 
 # --- Main Game Loop ---
 running = True
@@ -433,40 +500,38 @@ while running:
                      if preview_tower: preview_tower = None; print("Build cancelled.")
                      elif selected_tower: selected_tower = None; print("Tower deselected.")
             elif state == GAME_OVER and event.key == pygame.K_RETURN: state = MENU
-            elif state == MENU: # Menu navigation
-                if event.key == pygame.K_UP: selected_option = (selected_option - 1) % len(menu_options)
-                elif event.key == pygame.K_DOWN: selected_option = (selected_option + 1) % len(menu_options)
-                elif event.key == pygame.K_RETURN: state = GAME; reset_game_state()
+            elif state == MENU:
+                if event.key == pygame.K_UP:
+                    selected_option = (selected_option - 1) % len(menu_options)
+                    print("MENU: UP key pressed") # Re-added diagnostic print
+                elif event.key == pygame.K_DOWN:
+                    selected_option = (selected_option + 1) % len(menu_options)
+                    print("MENU: DOWN key pressed") # Re-added diagnostic print
+                elif event.key == pygame.K_RETURN:
+                    selected_difficulty = menu_options[selected_option]
+                    state = GAME
+                    reset_game_state()
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             clicked_handled = False
-            # --- Left Click --- #
-            if event.button == 1:
+            if event.button == 1: # Left Click
                 # 1. Check Bottom Bar Buttons
-                current_preview_type = None # Track what type we are currently previewing
-                if preview_tower: # If already previewing, maybe store its type?
-                    # For now assume only one type, so preview_tower existing means we are previewing 'chicken_tower'
-                    current_preview_type = 'chicken_tower'
-
+                current_preview_type = preview_tower.tower_type if preview_tower else None
                 for tower_key, rect in bottom_bar_button_rects.items():
                     if rect.collidepoint(mouse_pos):
                         clicked_handled = True
-                        temp_tower = Tower(0, 0, tower_img) # Assuming chicken_tower
-                        cost = temp_tower.base_cost
+                        cost = TOWER_TYPES[tower_key]['cost']
+                        icon_img = TOWER_TYPES[tower_key]['icon']
                         if player_gold >= cost:
-                            # If already building THIS tower type, cancel.
                             if current_preview_type == tower_key:
-                                 preview_tower = None
-                                 print(f"Cancelled building {tower_key}")
-                            # Otherwise, start building this type.
+                                preview_tower = None
                             else:
-                                preview_tower = Tower(mouse_pos[0], mouse_pos[1], tower_img)
+                                # Pass correct tower_type when creating preview
+                                preview_tower = Tower(mouse_pos[0], mouse_pos[1], icon_img, tower_key)
                                 selected_tower = None
-                                print(f"Started building {tower_key}")
                         else:
                             print(f"Not enough gold for {tower_key} (${cost})")
                         break
-
                 # 2. Check Upgrade Panel Buttons
                 if not clicked_handled and selected_tower:
                     for button_type, rect in upgrade_button_rects.items():
@@ -499,17 +564,16 @@ while running:
                                     print(f"Cannot upgrade {stat_type}: Locked by specialization!")
                                 # else: Should not happen
                             break # Stop checking buttons
-
                 # 3. Check Game Area Clicks
                 if not clicked_handled and state == GAME:
-                    if preview_tower:
+                    if preview_tower: # If building
                         if mouse_pos[1] < BOTTOM_BAR_Y:
                             can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
                             if can_place:
-                                towers.append(Tower(mouse_pos[0], mouse_pos[1], tower_img))
+                                # Create the actual tower with correct type from preview
+                                towers.append(Tower(mouse_pos[0], mouse_pos[1], preview_tower.image, preview_tower.tower_type))
                                 player_gold -= preview_tower.cost
-                                preview_tower = None # Exit build mode after placement
-                                print("Placed tower.")
+                                preview_tower = None
                             else:
                                 print("Cannot place tower here (Invalid location or insufficient gold).")
                         else:
@@ -532,7 +596,6 @@ while running:
                                 print(f"Selected Tower at {selected_tower.rect.center}")
                         else:
                             selected_tower = None # Clicking UI deselects tower
-
             # --- Right Click --- #
             elif event.button == 3:
                  if preview_tower: preview_tower = None; print("Build cancelled.")
@@ -546,11 +609,10 @@ while running:
         if enemies_spawned_this_wave < enemies_to_spawn_this_wave:
             spawn_timer -= effective_time_scale # Use effective time scale
             if spawn_timer <= 0:
-                enemy_type_to_spawn = 'cat' if wave_number % 3 == 0 else 'raccoon'
-                if random.random() < 0.3 and wave_number > 2:
-                     enemy_type_to_spawn = 'cat' if enemy_type_to_spawn == 'raccoon' else 'raccoon'
-                enemy_image_to_use = ENEMY_IMAGES[enemy_type_to_spawn]
-                enemies.append(Enemy(current_path, wave_number, enemy_image_to_use, enemy_type_to_spawn))
+                enemy_type = 'cat' if random.random() < 0.4 else 'raccoon'
+                # Need enemy image from ENEMY_IMAGES dict
+                enemy_img_to_use = ENEMY_IMAGES[enemy_type]
+                enemies.append(Enemy(current_path, wave_number, enemy_img_to_use, enemy_type=enemy_type))
                 enemies_spawned_this_wave += 1
                 spawn_timer += SPAWN_INTERVAL
         elif len(enemies) == 0:
@@ -578,9 +640,9 @@ while running:
         for tower in towers:
             tower.update(enemies, projectiles, effective_time_scale, projectile_img)
 
-        # Update Projectiles (pass effective time scale)
+        # Update Projectiles (Pass enemies list)
         for proj in projectiles[:]:
-            proj.move(effective_time_scale)
+            proj.move(effective_time_scale, enemies_list=enemies)
             if not proj.is_active:
                 projectiles.remove(proj)
 

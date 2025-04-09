@@ -5,21 +5,36 @@ import math # For upgrade cost calculation
 class Tower:
     MAX_LEVEL = 5 # Maximum level for any stat
     SECONDARY_MAX_LEVEL = 2 # Max level for the secondary chosen path
+    SPECIAL_PATH_MAX_LEVEL = 3 # Max level for AoE/Duration paths
 
-    def __init__(self, x, y, image):
+    # Define base stats per type
+    BASE_STATS = {
+        'basic': {'name':'Basic Chicken', 'range': 150, 'damage': 15, 'rate': 70, 'cost': 100, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
+        'bomb':  {'name':'Bomb Chicken',  'range': 100, 'damage': 30, 'rate': 120, 'cost': 125, 'aoe': 160, 'dot_dmg': 0, 'dot_dur': 0},
+        'fire':  {'name':'Fire Chicken',  'range': 120, 'damage': 10, 'rate': 100, 'cost': 125, 'aoe': 0, 'dot_dmg': 4, 'dot_dur': 120},
+    }
+
+    def __init__(self, x, y, image, tower_type='basic'):
         self.x = x
         self.y = y
         self.image = image
         self.rect = self.image.get_rect(center=(x, y))
+        self.tower_type = tower_type
 
-        # Base Stats
-        self.base_range = 150
-        self.base_damage = 30
-        self.base_fire_rate = 60 # Cooldown frames at 60 FPS (1 second)
-        self.base_cost = 100
+        # Load base stats from dictionary
+        stats = Tower.BASE_STATS.get(tower_type, Tower.BASE_STATS['basic']) # Default to basic if type unknown
+        self.base_range = stats['range']
+        self.base_damage = stats['damage']
+        self.base_fire_rate = stats['rate']
+        self.base_cost = stats['cost']
+        self.base_aoe = stats['aoe'] # Base Area of Effect radius
+        self.base_dot_damage = stats['dot_dmg'] # Base Damage Over Time per tick
+        self.base_dot_duration = stats['dot_dur'] # Base DoT duration in frames
 
         # Upgrade Levels
-        self.range_level = 1
+        self.range_level = 1   # Used by Basic
+        self.aoe_level = 1     # Used by Bomb
+        self.duration_level = 1 # Used by Fire
         self.damage_level = 1
         self.rate_level = 1
 
@@ -34,68 +49,110 @@ class Tower:
         self.range = 0
         self.damage = 0
         self.fire_rate = 0
+        self.aoe_radius = 0 # Calculated AoE
+        self.dot_damage = 0 # Calculated DoT damage
+        self.dot_duration = 0 # Calculated DoT duration
         self._update_stats()
 
         self.fire_cooldown = 0
         self.cost = self.base_cost # Initial placement cost
 
+    def _get_relevant_paths(self):
+        """Returns the set of valid upgrade paths for this tower type."""
+        if self.tower_type == 'basic':
+            return {'range', 'damage', 'rate'}
+        elif self.tower_type == 'bomb':
+            return {'aoe', 'damage', 'rate'}
+        elif self.tower_type == 'fire':
+            return {'duration', 'damage', 'rate'}
+        else:
+            return set() # Should not happen
+
     def _update_stats(self):
-        """Recalculates current stats based on levels."""
-        self.range = self.base_range + (self.range_level - 1) * 25 # +25 range per level
-        self.damage = self.base_damage + (self.damage_level - 1) * 10 # +10 damage per level
-        # Fire rate increase: Reduce cooldown frames (e.g., by 5 frames per level)
-        # Ensure fire_rate doesn't go too low (e.g., minimum 10 frames)
+        """Recalculates current stats based on levels and type."""
+        # Standard Stats (Damage and Fire Rate are universal)
+        self.damage = self.base_damage + (self.damage_level - 1) * 10
         self.fire_rate = max(10, self.base_fire_rate - (self.rate_level - 1) * 8)
-        # Don't print every time, only on upgrade
-        # print(f"Tower Stats Updated: R:{self.range_level}({self.range}) D:{self.damage_level}({self.damage}) F:{self.rate_level}({self.fire_rate})")
+
+        # Type-Specific Stats & Upgrade Paths
+        if self.tower_type == 'basic':
+            self.range = self.base_range + (self.range_level - 1) * 25
+            self.aoe_radius = 0
+            self.dot_damage = 0
+            self.dot_duration = 0
+        elif self.tower_type == 'bomb':
+            self.range = self.base_range # Fixed range
+            # AoE increases by 5% multiplicatively per aoe_level
+            self.aoe_radius = self.base_aoe * (1.05 ** (self.aoe_level - 1))
+            self.aoe_radius += (self.damage_level - 1) * 5 # Keep minor damage boost?
+            self.dot_damage = 0
+            self.dot_duration = 0
+        elif self.tower_type == 'fire':
+            self.range = self.base_range # Fixed range
+            self.aoe_radius = 0
+            # DoT duration increases by 10% multiplicatively per duration_level
+            self.dot_duration = int(self.base_dot_duration * (1.10 ** (self.duration_level - 1)))
+            self.dot_damage = self.base_dot_damage + (self.damage_level - 1) * 2
+
+        # Ensure AoE is int
+        self.aoe_radius = int(self.aoe_radius)
 
     def get_upgrade_cost(self, stat_type, level=None):
         """Calculates the cost. Returns -1 if max level, -2 if locked."""
-        # Check if locked into a different specialization
-        if self.specialization and self.specialization != stat_type:
-            return -2 # Locked
-
+        if stat_type not in self._get_relevant_paths():
+             return -1
         current_level = level
+        max_level_for_path = Tower.SPECIAL_PATH_MAX_LEVEL if stat_type in {'aoe', 'duration'} else Tower.MAX_LEVEL
+        level_attr = stat_type + '_level'
         if current_level is None:
-            if stat_type == 'range': current_level = self.range_level
-            elif stat_type == 'damage': current_level = self.damage_level
-            elif stat_type == 'rate': current_level = self.rate_level
-            else: return -1 # Unknown type (treat as max)
+            if hasattr(self, level_attr):
+                 current_level = getattr(self, level_attr)
+            else:
+                print(f"Error: Tower missing level attribute '{level_attr}'")
+                return -1
 
-        # --- Locking Logic --- #
-        # 1. Is this path explicitly locked?
-        if stat_type in self.locked_paths:
-            return -2 # Locked
+        # --- Locking Logic (ONLY for Basic Tower) --- #
+        if self.tower_type == 'basic':
+            # 1. Is this path explicitly locked?
+            if stat_type in self.locked_paths:
+                return -2 # Locked
 
-        # 2. Is a primary path chosen? If yes, can only upgrade primary beyond secondary cap.
-        if self.primary_path and stat_type != self.primary_path:
-            if current_level >= Tower.SECONDARY_MAX_LEVEL:
-                 return -2 # Locked (Secondary path cap)
+            # 2. Is a primary path chosen? If yes, can only upgrade primary beyond secondary cap.
+            if self.primary_path and stat_type != self.primary_path:
+                if current_level >= Tower.SECONDARY_MAX_LEVEL:
+                    return -2 # Locked (Secondary path cap)
+        # --- End Basic Locking Logic --- #
 
-        # 3. Is the primary path maxed?
-        if stat_type == self.primary_path and current_level >= Tower.MAX_LEVEL:
-             return -1 # Max level reached
+        # --- Check Max Level (Applies to all types) --- #
+        if stat_type == self.primary_path and current_level >= max_level_for_path:
+             return -1 # Primary path max level reached
+        elif current_level >= max_level_for_path:
+             return -1 # Any path max level reached
+        # --- End Max Level Check --- #
 
-        # 4. Is a non-primary, non-locked path maxed (shouldn't happen if primary logic is correct)?
-        if current_level >= Tower.MAX_LEVEL:
-             return -1 # Max level reached
-        # --- End Locking Logic --- #
-
+        # --- Cost Calculation (Applies to all types) --- #
         base_upgrade_cost = 30
-        # Cost to reach level (current_level + 1)
+        if stat_type == 'damage': base_upgrade_cost = 35
+        elif stat_type == 'rate': base_upgrade_cost = 25
+        elif stat_type == 'aoe': base_upgrade_cost = 30
+        elif stat_type == 'duration': base_upgrade_cost = 25
+        elif stat_type == 'range': base_upgrade_cost = 30 # Ensure range has a cost
+
         cost = int(base_upgrade_cost * math.pow(1.8, current_level - 1))
         return cost
 
     def get_total_spent(self):
         """Calculates the total gold spent on this tower (placement + upgrades)."""
         total_spent = self.base_cost
-        # Calculate cost of upgrades purchased
-        for level in range(1, self.range_level): # Levels 1 to current-1
-            total_spent += self.get_upgrade_cost('range', level) # Cost to reach level+1
-        for level in range(1, self.damage_level):
-            total_spent += self.get_upgrade_cost('damage', level)
-        for level in range(1, self.rate_level):
-            total_spent += self.get_upgrade_cost('rate', level)
+        paths = self._get_relevant_paths()
+
+        for stat_type in paths:
+            level_attr = stat_type + '_level'
+            current_level = getattr(self, level_attr, 1)
+            for level in range(1, current_level):
+                cost_to_reach_next = self.get_upgrade_cost(stat_type, level)
+                if cost_to_reach_next >= 0:
+                    total_spent += cost_to_reach_next
         return total_spent
 
     def get_sell_value(self):
@@ -105,59 +162,58 @@ class Tower:
     def upgrade(self, stat_type):
         """Attempts to upgrade, sets specialization on reaching max level."""
         cost = self.get_upgrade_cost(stat_type)
-        if cost < 0: # Covers max (-1) and locked (-2)
+        if cost < 0:
             print(f"Cannot upgrade {stat_type}: {'Max level' if cost == -1 else 'Locked'}.")
             return False, 0
 
-        upgraded = False
-        new_level = -1
-        if stat_type == 'range' and self.range_level < Tower.MAX_LEVEL:
-            self.range_level += 1
-            new_level = self.range_level
-            upgraded = True
-        elif stat_type == 'damage' and self.damage_level < Tower.MAX_LEVEL:
-            self.damage_level += 1
-            new_level = self.damage_level
-            upgraded = True
-        elif stat_type == 'rate' and self.rate_level < Tower.MAX_LEVEL:
-            self.rate_level += 1
-            new_level = self.rate_level
-            upgraded = True
+        level_attr = stat_type + '_level'
+        if not hasattr(self, level_attr):
+             print(f"Error: Cannot upgrade invalid stat '{stat_type}'")
+             return False, 0
+        current_level = getattr(self, level_attr)
+        max_level_for_path = Tower.SPECIAL_PATH_MAX_LEVEL if stat_type in {'aoe', 'duration'} else Tower.MAX_LEVEL
+        if current_level >= max_level_for_path:
+            print(f"Cannot upgrade {stat_type}: Already at max level {max_level_for_path}.")
+            return False, 0
 
-        if upgraded:
-            self._update_stats()
-            print(f"Upgraded {stat_type} to level {new_level}. Cost: {cost}")
-            # Check if specialization should be set
-            if new_level == Tower.MAX_LEVEL and self.specialization is None:
-                self.specialization = stat_type
-                print(f"Tower specialized in {stat_type.upper()}!")
+        setattr(self, level_attr, current_level + 1)
+        new_level = current_level + 1
+        self._update_stats()
+        print(f"Upgraded {stat_type} to level {new_level}. Cost: {cost}")
 
-            # --- Apply Locking Logic --- #
-            all_stats = {'range', 'damage', 'rate'}
-            paths_at_lvl_2_or_more = {st for st in all_stats if getattr(self, st + '_level') >= 2}
+        # --- Set Primary Path (Applies to all types, used for headband) --- #
+        available_paths = self._get_relevant_paths()
+        paths_at_lvl_2_or_more = {st for st in available_paths if getattr(self, st + '_level', 1) >= 2}
+        if new_level == 3 and not self.primary_path:
+            self.primary_path = stat_type
+            print(f"Primary path chosen: {stat_type.upper()} (Determines headband)")
+        # --- End Set Primary Path --- #
 
+        # --- Locking Logic (ONLY for Basic Tower) --- #
+        if self.tower_type == 'basic':
             # 1. Lock third path when two paths reach level 2
-            if len(paths_at_lvl_2_or_more) == 2 and not self.primary_path:
-                third_path = list(all_stats - paths_at_lvl_2_or_more)[0]
+            if len(paths_at_lvl_2_or_more) == 2 and self.primary_path is None:
+                third_path = list(available_paths - paths_at_lvl_2_or_more)[0]
                 if third_path not in self.locked_paths:
                     self.locked_paths.add(third_path)
                     print(f"Locked third path: {third_path.upper()} at Level 1.")
 
-            # 2. Set primary/secondary when one path reaches level 3
-            if new_level == 3 and not self.primary_path:
-                self.primary_path = stat_type
-                print(f"Primary path chosen: {stat_type.upper()}")
-                # Lock the other chosen path at level 2
-                for other_path in paths_at_lvl_2_or_more:
-                    if other_path != self.primary_path and other_path not in self.locked_paths:
+            # 2. Lock secondary path when primary is chosen at level 3
+            if self.primary_path == stat_type and new_level == 3:
+                secondary_path_candidates = paths_at_lvl_2_or_more - {self.primary_path}
+                for other_path in secondary_path_candidates:
+                    if other_path not in self.locked_paths:
                         self.locked_paths.add(other_path)
                         print(f"Locked secondary path: {other_path.upper()} at Level {Tower.SECONDARY_MAX_LEVEL}.")
-            # --- End Locking Logic --- #
+        # --- End Basic Locking Logic --- #
 
-            return True, cost
-        else:
-            print(f"Upgrade failed for {stat_type} (Should not happen if cost check passed)")
-            return False, 0
+        # --- Set Specialization (Applies to all types) --- #
+        if new_level == max_level_for_path and self.specialization is None and self.primary_path == stat_type:
+             self.specialization = stat_type
+             print(f"Tower specialized in {stat_type.upper()}! (Headband set)")
+        # --- End Set Specialization --- #
+
+        return True, cost
 
     def update(self, enemies, projectiles, time_scale=1.0, projectile_img=None):
         # Cooldown timer - decrease by time_scale
@@ -170,11 +226,13 @@ class Tower:
         if self.fire_cooldown <= 0:
             target = self.find_target(enemies)
             if target:
-                # Create projectile, passing its image
+                # Create projectile, passing its image and a reference to this tower
                 if projectile_img:
-                    projectiles.append(Projectile(self.rect.centerx, self.rect.centery, target, self.damage, projectile_img))
-                else: # Fallback if no image provided (shouldn't happen with main.py changes)
-                    projectiles.append(Projectile(self.rect.centerx, self.rect.centery, target, self.damage))
+                    # Pass self (the tower instance) as tower_ref
+                    projectiles.append(Projectile(self.rect.centerx, self.rect.centery, target, self.damage, projectile_img, tower_ref=self))
+                else: # Fallback if no image provided
+                     # Pass self (the tower instance) as tower_ref
+                    projectiles.append(Projectile(self.rect.centerx, self.rect.centery, target, self.damage, tower_ref=self))
                 self.fire_cooldown = self.fire_rate # Reset cooldown fully
 
     def find_target(self, enemies):
@@ -207,40 +265,34 @@ class Tower:
         if is_selected:
             pygame.draw.circle(screen, (255, 255, 255, 100), self.rect.center, self.range, 2)
 
-        # Draw Headband if specialized
-        if self.specialization:
-            headband_color = (0, 0, 0)
-            if self.specialization == 'range': headband_color = (0, 0, 255) # Blue
-            elif self.specialization == 'damage': headband_color = (255, 0, 0) # Red
-            elif self.specialization == 'rate': headband_color = (0, 255, 0) # Green
-
-            # Draw a small rectangle near the top-center
-            headband_width = self.rect.width * 0.6
-            headband_height = 6
-            headband_x = self.rect.centerx - headband_width / 2
-            headband_y = self.rect.top + 3 # Position near top
-            headband_rect = pygame.Rect(headband_x, headband_y, headband_width, headband_height)
-
-            pygame.draw.rect(screen, headband_color, headband_rect, border_radius=2)
-            pygame.draw.rect(screen, (50, 50, 50), headband_rect, 1, border_radius=2) # Dark outline 
-
-        # Draw Headband if primary path is MAXED
+        # --- Draw Headband (Consolidated Logic) --- #
+        draw_headband = False
+        headband_path = None
+        max_level_for_primary = 0
         primary_level = 0
-        if self.primary_path == 'range': primary_level = self.range_level
-        elif self.primary_path == 'damage': primary_level = self.damage_level
-        elif self.primary_path == 'rate': primary_level = self.rate_level
+        if self.specialization:
+            draw_headband = True
+            headband_path = self.specialization
+        elif self.primary_path:
+            level_attr = self.primary_path + '_level'
+            if hasattr(self, level_attr):
+                primary_level = getattr(self, level_attr)
+                max_level_for_primary = Tower.SPECIAL_PATH_MAX_LEVEL if self.primary_path in {'aoe', 'duration'} else Tower.MAX_LEVEL
+                if primary_level >= max_level_for_primary:
+                    draw_headband = True
+                    headband_path = self.primary_path
 
-        # Check if primary path exists AND is at max level
-        if self.primary_path and primary_level >= Tower.MAX_LEVEL:
+        if draw_headband and headband_path:
             headband_color = (0, 0, 0)
-            if self.primary_path == 'range': headband_color = (0, 0, 255) # Blue
-            elif self.primary_path == 'damage': headband_color = (255, 0, 0) # Red
-            elif self.primary_path == 'rate': headband_color = (0, 255, 0) # Green
+            if headband_path == 'range' or headband_path == 'aoe': headband_color = (0, 0, 255)
+            elif headband_path == 'damage': headband_color = (255, 0, 0)
+            elif headband_path == 'rate' or headband_path == 'duration': headband_color = (0, 255, 0)
 
+            # Draw a small rectangle near the top-center, lowered further
             headband_width = self.rect.width * 0.6
             headband_height = 6
             headband_x = self.rect.centerx - headband_width / 2
-            headband_y = self.rect.top + 3
+            headband_y = self.rect.top + 18 # Lowered further from +8
             headband_rect = pygame.Rect(headband_x, headband_y, headband_width, headband_height)
             pygame.draw.rect(screen, headband_color, headband_rect, border_radius=2)
             pygame.draw.rect(screen, (50, 50, 50), headband_rect, 1, border_radius=2) 
