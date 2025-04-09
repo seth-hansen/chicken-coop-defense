@@ -12,6 +12,7 @@ SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 FPS = 60
 ASSETS_DIR = "assets"
+BASE_GAME_SPEED = 5.0 # New constant for overall speed increase
 
 # Colors
 WHITE = (255, 255, 255)
@@ -23,6 +24,7 @@ YELLOW = (255, 255, 0)
 CYAN = (0, 255, 255)
 GRAY = (100, 100, 100)
 PATH_COLOR = (101, 67, 33) # Dirt Brown
+ORANGE = (255, 165, 0) # Added for sell button color
 
 # Define game states
 MENU = 'menu'
@@ -106,11 +108,7 @@ for enemy_type, fallback_color in [('raccoon', GRAY), ('cat', (200, 150, 100))]:
 state = MENU
 selected_option = 0
 selected_difficulty = 'Easy'
-
-# Difficulty settings
 difficulty_health = {'Easy': 20, 'Medium': 10, 'Hard': 5}
-
-# Game state variables (reset when game starts)
 towers = []
 enemies = []
 projectiles = []
@@ -123,10 +121,13 @@ enemies_to_spawn_this_wave = 0
 enemies_spawned_this_wave = 0
 wave_timer = 0
 spawn_timer = 0
-time_scale = 1.0 # Add time scale variable, default to normal speed
-
+time_scale = 1.0
 build_mode = False
 preview_tower = None
+selected_tower = None # Track the currently selected tower
+
+# Upgrade Button Rects (will be calculated later)
+upgrade_button_rects = {}
 
 # Wave Settings
 TIME_BETWEEN_WAVES = 10 * FPS
@@ -140,14 +141,13 @@ def reset_game_state():
     """Resets all variables for a new game."""
     global towers, enemies, projectiles, current_path, player_gold, player_health
     global score, wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave
-    global wave_timer, spawn_timer, build_mode, preview_tower, time_scale
+    global wave_timer, spawn_timer, build_mode, preview_tower, time_scale, selected_tower
 
     towers = []
     enemies = []
     projectiles = []
-    # Pass new screen dimensions to path generation
     current_path = get_path(SCREEN_WIDTH, SCREEN_HEIGHT)
-    player_gold = 100
+    player_gold = 150
     player_health = difficulty_health[selected_difficulty]
     score = 0
     wave_number = 0 # Start at wave 0, will increment to 1 immediately
@@ -158,6 +158,7 @@ def reset_game_state():
     time_scale = 1.0 # Reset time scale on new game
     build_mode = False
     preview_tower = None
+    selected_tower = None # Reset selected tower
     start_next_wave() # Prepare the first wave
 
 def start_next_wave():
@@ -263,6 +264,87 @@ def draw_game_ui():
     time_scale_text = ui_font.render(speed_text, True, WHITE)
     screen.blit(time_scale_text, (10, ui_build_mode_y + 30))
 
+    # Draw Upgrade Panel if a tower is selected
+    if selected_tower:
+        draw_upgrade_panel(selected_tower)
+
+def draw_upgrade_panel(tower):
+    """Draws the upgrade panel for the selected tower."""
+    global upgrade_button_rects
+    upgrade_button_rects = {}
+    panel_width = 300
+    panel_height = 280
+    panel_x = SCREEN_WIDTH - panel_width - 20
+    panel_y = 20
+    panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+    panel_surf = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+    panel_surf.fill((50, 50, 50, 210))
+    screen.blit(panel_surf, panel_rect.topleft)
+    pygame.draw.rect(screen, WHITE, panel_rect, 2)
+    panel_font = pygame.font.Font(None, 40)
+    button_font = pygame.font.Font(None, 36)
+    y_offset = panel_y + 15
+    stats = [
+        (f"Range: {tower.range}", f"Lvl {tower.range_level}", 'range'),
+        (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
+        (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
+    ]
+    button_width = 90
+    button_height = 40
+    button_x = panel_x + panel_width - button_width - 15
+    label_x = panel_x + 15
+
+    for i, (stat_text, level_text, stat_type) in enumerate(stats):
+        text = panel_font.render(stat_text, True, WHITE)
+        screen.blit(text, (label_x, y_offset))
+        level_t = panel_font.render(level_text, True, GRAY)
+        screen.blit(level_t, (label_x + 140, y_offset))
+
+        cost = tower.get_upgrade_cost(stat_type)
+        button_y = y_offset + text.get_height() // 2 - button_height // 2 + 5
+        btn_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+        upgrade_button_rects[stat_type] = btn_rect
+
+        # Determine Button State/Text based on cost result
+        if cost == -1:
+            # Max Level
+            btn_color = GRAY
+            button_text = "MAX"
+            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+        elif cost == -2:
+            # Locked by specialization
+            btn_color = (40, 40, 40) # Dark Gray
+            button_text = "Locked"
+            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+        else:
+            # Available or Unaffordable
+            can_afford = player_gold >= cost
+            btn_color = GREEN if can_afford else RED
+            button_text = f"${cost}"
+            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=5)
+
+        # Draw Button Text
+        button_surf = button_font.render(button_text, True, BLACK if cost >= 0 else WHITE)
+        button_text_rect = button_surf.get_rect(center=btn_rect.center)
+        screen.blit(button_surf, button_text_rect)
+
+        y_offset += 50
+
+    # Sell Button
+    y_offset += 15
+    sell_value = tower.get_sell_value()
+    sell_button_text = f"Sell ${sell_value}"
+    sell_button_width = panel_width - 30
+    sell_button_height = 45
+    sell_button_x = panel_x + 15
+    sell_button_y = y_offset
+    sell_btn_rect = pygame.Rect(sell_button_x, sell_button_y, sell_button_width, sell_button_height)
+    upgrade_button_rects['sell'] = sell_btn_rect
+    pygame.draw.rect(screen, ORANGE, sell_btn_rect, border_radius=5)
+    sell_surf = button_font.render(sell_button_text, True, BLACK)
+    sell_rect = sell_surf.get_rect(center=sell_btn_rect.center)
+    screen.blit(sell_surf, sell_rect)
+
 def draw_tiled_background_and_path(path_width=40): # Width of the dirt path
     """Tiles the background and draws the path using path_tile."""
     # Tile the main background
@@ -325,75 +407,116 @@ while running:
 
         # Mouse Input
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if state == GAME and build_mode and preview_tower:
-                if event.button == 1:
-                    can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
-                    if can_place:
-                        towers.append(Tower(mouse_pos[0], mouse_pos[1], tower_img))
-                        player_gold -= preview_tower.cost
-                    else:
-                        print("Cannot place tower: Invalid location or insufficient gold.")
+            if event.button == 1: # Left Click
+                clicked_on_ui = False
+                # Check Upgrade/Sell Panel Buttons First
+                if selected_tower:
+                    for button_type, rect in upgrade_button_rects.items():
+                        if rect.collidepoint(mouse_pos):
+                            clicked_on_ui = True
+                            if button_type == 'sell':
+                                # Sell the tower
+                                sell_value = selected_tower.get_sell_value()
+                                player_gold += sell_value
+                                towers.remove(selected_tower)
+                                print(f"Sold tower for ${sell_value}. Gold: {player_gold}")
+                                selected_tower = None
+                            else: # It's an upgrade button
+                                stat_type = button_type
+                                cost = selected_tower.get_upgrade_cost(stat_type)
+                                # Corrected Check: cost >= 0 means it's possible and not max/locked
+                                if cost >= 0:
+                                    if player_gold >= cost:
+                                        # Attempt upgrade
+                                        success, actual_cost = selected_tower.upgrade(stat_type)
+                                        if success:
+                                            player_gold -= actual_cost
+                                            print(f"Upgraded {stat_type}! Gold left: {player_gold}")
+                                        # else: No need for internal fail message here
+                                    else:
+                                        print("Not enough gold!")
+                                elif cost == -1:
+                                    print("Already at max level!")
+                                elif cost == -2:
+                                    print(f"Cannot upgrade {stat_type}: Locked by specialization!")
+                                # else: Should not happen
+                            break # Stop checking buttons
 
-    # --- State Logic & Updates ---
+                # If not clicking UI, check game elements (Placement/Selection)
+                if not clicked_on_ui:
+                    if state == GAME:
+                        if build_mode and preview_tower:
+                            # Try to place tower
+                            can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
+                            if can_place:
+                                towers.append(Tower(mouse_pos[0], mouse_pos[1], tower_img))
+                                player_gold -= preview_tower.cost
+                            else:
+                                print("Cannot place tower: Invalid location or insufficient gold.")
+                            # De-select any selected tower when attempting placement
+                            selected_tower = None
+                        else:
+                            # Not in build mode, try selecting a tower
+                            clicked_tower = None
+                            for tower in towers:
+                                if tower.rect.collidepoint(mouse_pos):
+                                    clicked_tower = tower
+                                    break
+                            selected_tower = clicked_tower
+                            if selected_tower:
+                                print(f"Selected Tower at {selected_tower.rect.center}")
+                            # If clicking empty space, deselect tower
+                            if not selected_tower:
+                                 selected_tower = None
+
+    # --- State Logic & Updates (Apply time_scale * BASE_GAME_SPEED) ---
     if state == GAME:
-        # Wave Management (Spawn with correct images)
+        effective_time_scale = time_scale * BASE_GAME_SPEED
+
+        # Wave Management (apply effective time scale)
         if enemies_spawned_this_wave < enemies_to_spawn_this_wave:
-            spawn_timer -= time_scale
+            spawn_timer -= effective_time_scale # Use effective time scale
             if spawn_timer <= 0:
                 enemy_type_to_spawn = 'cat' if wave_number % 3 == 0 else 'raccoon'
                 if random.random() < 0.3 and wave_number > 2:
                      enemy_type_to_spawn = 'cat' if enemy_type_to_spawn == 'raccoon' else 'raccoon'
-                # Pass the corresponding pre-loaded image
                 enemy_image_to_use = ENEMY_IMAGES[enemy_type_to_spawn]
-                enemies.append(Enemy(current_path, wave_number, enemy_image_to_use))
+                enemies.append(Enemy(current_path, wave_number, enemy_image_to_use, enemy_type_to_spawn))
                 enemies_spawned_this_wave += 1
                 spawn_timer += SPAWN_INTERVAL
         elif len(enemies) == 0:
-            # Between waves phase (all spawned and all defeated)
-            wave_timer -= time_scale # Use time_scale
+            wave_timer -= effective_time_scale # Use effective time scale
             if wave_timer <= 0:
                 start_next_wave()
 
-        # Update Enemies
+        # Update Enemies (pass effective time scale)
         for enemy in enemies[:]:
-            reached_end = enemy.move(time_scale) # Check if enemy moved to the end this frame
-
-            # Reduce health FIRST if enemy reached the end this frame
+            reached_end = enemy.move(effective_time_scale)
             if reached_end:
                 player_health -= 1
-                print(f"Enemy reached end! Health: {player_health}")
-                # enemy.die(killed_by_player=False) was called inside move()
-                # So the enemy IS dead now, but we process the health loss immediately.
-
-            # NOW check if the enemy is dead (either by tower or reaching end)
             if enemy.is_dead:
-                if not reached_end: # Only award points/gold if killed by player/tower
+                if not reached_end:
                     player_gold += enemy.reward
                     score += enemy.points_value
-                # Always remove the enemy if it's dead, regardless of how
                 enemies.remove(enemy)
-                # No continue needed here, loop will naturally proceed after removal
 
         # Check for Game Over
         if player_health <= 0:
             state = GAME_OVER
-            print("Game Over! Health reached zero.")
-            continue # Skip rest of GAME updates/drawing
+            continue
 
-        # Update Towers
+        # Update Towers (pass effective time scale)
         for tower in towers:
-            # Pass the loaded projectile image when creating
-            tower.update(enemies, projectiles, time_scale, projectile_img)
+            tower.update(enemies, projectiles, effective_time_scale, projectile_img)
 
-        # Update Projectiles
+        # Update Projectiles (pass effective time scale)
         for proj in projectiles[:]:
-            proj.move(time_scale)
+            proj.move(effective_time_scale)
             if not proj.is_active:
                 projectiles.remove(proj)
 
-        # Update Preview Tower
+        # Update Preview Tower (unchanged)
         if build_mode and preview_tower:
-            # Update position using mouse_pos, image is already set
             preview_tower.x, preview_tower.y = mouse_pos
             preview_tower.rect.center = mouse_pos
 
@@ -408,7 +531,7 @@ while running:
 
         # Draw Towers, Enemies, Projectiles
         for tower in towers:
-            tower.draw(screen)
+            tower.draw(screen, is_selected=(tower == selected_tower))
         for enemy in enemies:
             enemy.draw(screen)
         for proj in projectiles:

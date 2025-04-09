@@ -27,18 +27,28 @@ class Enemy:
         self.enemy_type = enemy_type
         self.float_x, self.float_y = path[0]
         self.rect = self.image.get_rect(center=(self.float_x, self.float_y))
+
+        # Base stats for Raccoon (default)
+        raccoon_base_speed = 0.5
+        raccoon_base_max_health = 90
+        raccoon_reward = 12
+        raccoon_points_value = 6
+
+        # Assign stats based on type
         if enemy_type == 'cat':
-            self.base_speed = 0.7
-            self.base_max_health = 70
-            self.reward = 8
-            self.points_value = 4
-        else:
-            self.base_speed = 0.5
-            self.base_max_health = 90
-            self.reward = 12
-            self.points_value = 6
+            self.base_speed = raccoon_base_speed * 1.2 # Cats are faster
+            self.base_max_health = int(raccoon_base_max_health * 1.5) # Cats have 1.5x health
+            self.reward = int(raccoon_reward * 0.8) # Cats give less reward
+            self.points_value = int(raccoon_points_value * 1.2) # Cats worth more points
+        else: # Raccoon stats
+            self.base_speed = raccoon_base_speed
+            self.base_max_health = raccoon_base_max_health
+            self.reward = raccoon_reward
+            self.points_value = raccoon_points_value
+
+        # Apply wave scaling
         self.speed = self.base_speed + (wave_number - 1) * 0.03
-        self.max_health = self.base_max_health + (wave_number - 1) * 15
+        self.max_health = self.base_max_health + (wave_number - 1) * 15 # Keep wave scaling same for both for now
         self.health = self.max_health
         self.path_index = 0
         self.is_dead = False
