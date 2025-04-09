@@ -116,6 +116,26 @@ for enemy_type, fallback_color in [('raccoon', GRAY), ('cat', (200, 150, 100))]:
     raw_img = load_image(f"{enemy_type}.png", default_color=fallback_color)
     ENEMY_IMAGES[enemy_type] = scale_image_aspect_ratio(raw_img, target_width=ENEMY_TARGET_WIDTH)
 
+# --- Load Coop Image (Moved Here) --- #
+try:
+    original_coop_image = pygame.image.load('assets/coop.png').convert_alpha()
+    print("Loaded image: assets/coop.png")
+
+    # --- Scale Coop Image (NEW) --- #
+    target_coop_height = int(tower_img.get_height() * 1.2) # ~20% taller than tower
+    coop_image = scale_image_aspect_ratio(original_coop_image, target_height=target_coop_height)
+    coop_rect = coop_image.get_rect()
+    print(f"Scaled coop to height: {coop_image.get_height()}")
+    # --- End Scale Coop Image --- #
+
+except pygame.error as e:
+    print(f"Error loading coop.png: {e}")
+    coop_image = pygame.Surface((50, 50)) # Keep placeholder size small
+    coop_image.fill((139, 69, 19)) # Brown placeholder
+    coop_rect = coop_image.get_rect()
+    print("Using placeholder for coop image.")
+# --- End Coop Image Load ---
+
 # --- Define Tower Types (AFTER assets are loaded) ---
 TOWER_TYPES = { # Store info about available tower types
     'basic': {'name': 'Basic Chicken', 'cost': Tower.BASE_STATS['basic']['cost'], 'icon': tower_img},
@@ -165,7 +185,7 @@ def reset_game_state():
     """Resets all variables for a new game."""
     global towers, enemies, projectiles, current_path, player_gold, player_health
     global score, wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave
-    global wave_timer, spawn_timer, build_mode, preview_tower, time_scale, selected_tower
+    global wave_timer, spawn_timer, build_mode, preview_tower, time_scale, selected_tower, coop_rect
 
     towers = []
     enemies = []
@@ -178,12 +198,22 @@ def reset_game_state():
     enemies_to_spawn_this_wave = 0
     enemies_spawned_this_wave = 0
     wave_timer = 0 # Start first wave immediately
-    spawn_timer = 0
+    spawn_timer = 0 # Reset within-wave spawn timer
     time_scale = 1.0 # Reset time scale on new game
     build_mode = False
     preview_tower = None
     selected_tower = None # Reset selected tower
     start_next_wave() # Prepare the first wave
+
+    # --- Position the Coop --- #
+    if current_path and coop_rect: # Check if path (list) and coop exist
+        end_point = current_path[-1] # Access last element of the list
+        end_x, end_y = int(end_point[0]), int(end_point[1])
+        # Align bottom-center with path end, then move down slightly (1/8 height)
+        coop_rect.midbottom = (end_x, end_y + coop_rect.height // 8)
+    # --- End Coop Position --- #
+
+    print("Game reset.")
 
 def start_next_wave():
     """Sets up variables for the next wave and awards end-of-wave gold."""
@@ -259,6 +289,16 @@ def is_on_path(pos, path_segments, buffer=25): # Increased buffer slightly
         if (mouse_pos_vec - closest_point).length_squared() < buffer**2:
             return True
     return False
+
+def is_placement_valid(new_pos_tuple, existing_towers, min_separation):
+    """Checks if a new tower position is far enough from existing towers."""
+    new_pos = pygame.Vector2(new_pos_tuple)
+    for tower in existing_towers:
+        dist_sq = new_pos.distance_squared_to(tower.rect.center)
+        if dist_sq < min_separation ** 2:
+            print(f"Placement failed: Too close to existing tower at {tower.rect.center}. Dist sq: {dist_sq:.1f} < Min sq: {min_separation**2:.1f}")
+            return False # Too close
+    return True # Position is valid
 
 def draw_game_ui():
     # Gold
@@ -477,7 +517,7 @@ def draw_tiled_background_and_path(path_width=40):
 
     # Draw the path (path points are already constrained to playable area)
     if len(current_path) > 1:
-        pygame.draw.lines(screen, PATH_COLOR, False, current_path, path_width * 2)
+        pygame.draw.lines(screen, PATH_COLOR, False, current_path, path_width)
 
 # --- Main Game Loop ---
 running = True
@@ -497,8 +537,15 @@ while running:
                 if event.key == pygame.K_f: time_scale = min(time_scale * 2, 16.0)
                 elif event.key == pygame.K_s: time_scale = max(1.0, time_scale / 2)
                 elif event.key == pygame.K_ESCAPE:
-                     if preview_tower: preview_tower = None; print("Build cancelled.")
-                     elif selected_tower: selected_tower = None; print("Tower deselected.")
+                     if preview_tower: # If actively placing a tower
+                         preview_tower = None
+                         print("Build cancelled.")
+                     elif selected_tower: # If a tower is selected (showing upgrade panel)
+                         selected_tower = None
+                         print("Tower deselected.")
+                     else: # Otherwise, go back to the main menu
+                         state = MENU
+                         print("Returning to Main Menu.")
             elif state == GAME_OVER and event.key == pygame.K_RETURN: state = MENU
             elif state == MENU:
                 if event.key == pygame.K_UP:
@@ -568,14 +615,24 @@ while running:
                 if not clicked_handled and state == GAME:
                     if preview_tower: # If building
                         if mouse_pos[1] < BOTTOM_BAR_Y:
-                            can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
-                            if can_place:
-                                # Create the actual tower with correct type from preview
+                            # --- Proximity Check --- #
+                            min_tower_separation = preview_tower.rect.width * 0.75 # Min dist based on tower width
+                            placement_ok = is_placement_valid(mouse_pos, towers, min_tower_separation)
+                            # --- Original Checks --- #
+                            gold_ok = player_gold >= preview_tower.cost
+                            path_ok = not is_on_path(mouse_pos, current_path)
+
+                            if gold_ok and path_ok and placement_ok:
                                 towers.append(Tower(mouse_pos[0], mouse_pos[1], preview_tower.image, preview_tower.tower_type))
                                 player_gold -= preview_tower.cost
                                 preview_tower = None
                             else:
-                                print("Cannot place tower here (Invalid location or insufficient gold).")
+                                # Give specific feedback
+                                reason = []
+                                if not gold_ok: reason.append("insufficient gold")
+                                if not path_ok: reason.append("on path")
+                                if not placement_ok: reason.append("too close to another tower")
+                                print(f"Cannot place tower here ({', '.join(reason)}).")
                         else:
                              print("Cannot place tower in UI area.")
                     # If not building, try selecting existing tower
@@ -660,6 +717,11 @@ while running:
         # Draw tiled background and path first
         draw_tiled_background_and_path()
 
+        # --- Draw Coop Here --- #
+        if coop_image and coop_rect:
+            screen.blit(coop_image, coop_rect)
+        # --- End Coop Draw --- #
+
         # Draw Towers, Enemies, Projectiles
         for tower in towers:
             tower.draw(screen, is_selected=(tower == selected_tower))
@@ -677,19 +739,26 @@ while running:
             preview_tower.x, preview_tower.y = mouse_pos
             preview_tower.rect.center = mouse_pos
 
-            # Determine validity and color
-            can_place = player_gold >= preview_tower.cost and not is_on_path(mouse_pos, current_path)
-            tint_color = (0, 100, 255, 150) if can_place else (255, 0, 0, 150) # Blue or Red semi-transparent
+            # --- Determine full placement validity for visual feedback --- #
+            gold_ok = player_gold >= preview_tower.cost
+            path_ok = not is_on_path(mouse_pos, current_path)
+            min_tower_separation = preview_tower.rect.width * 0.75
+            placement_proximity_ok = is_placement_valid(mouse_pos, towers, min_tower_separation)
+            is_valid_placement = gold_ok and path_ok and placement_proximity_ok
+            # --- End Validity Check --- #
 
-            # Draw semi-transparent range circle
+            # Determine tint color based on overall validity
+            tint_color = (0, 100, 255, 150) if is_valid_placement else (255, 0, 0, 150) # Blue or Red
+
+            # Draw semi-transparent range circle using the tint color
             range_surface = pygame.Surface((preview_tower.range * 2, preview_tower.range * 2), pygame.SRCALPHA)
             range_circle_color = (tint_color[0], tint_color[1], tint_color[2], 50) # Lighter alpha for range
             pygame.draw.circle(range_surface, range_circle_color, (preview_tower.range, preview_tower.range), preview_tower.range)
             screen.blit(range_surface, (preview_tower.rect.centerx - preview_tower.range, preview_tower.rect.centery - preview_tower.range))
 
-            # Draw tinted tower image preview (centered)
+            # Draw tinted tower image preview using the tint color
             preview_img_copy = preview_tower.image.copy()
-            preview_img_copy.fill(tint_color, special_flags=pygame.BLEND_RGBA_MULT) # Apply tint
+            preview_img_copy.fill(tint_color, special_flags=pygame.BLEND_RGBA_MULT)
             img_rect = preview_img_copy.get_rect(center=preview_tower.rect.center)
             screen.blit(preview_img_copy, img_rect)
 
