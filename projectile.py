@@ -133,6 +133,10 @@ class Projectile:
                 self.target.apply_dot(self.dot_damage_per_second, self.dot_duration_seconds)
                 print(f"Applied Fire DoT: {self.dot_damage_per_second:.1f} dmg/sec for {self.dot_duration_seconds} sec.")
             self.is_active = False # Fire projectile disappears on hit
+        elif self.projectile_type == 'minigun': # Added handling for minigun
+             if self.target and not self.target.is_dead:
+                 self.target.take_damage(self.base_damage)
+             self.is_active = False # Minigun projectile disappears on hit
 
     def draw(self, screen):
         if not self.is_active: return

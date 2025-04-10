@@ -141,6 +141,7 @@ TOWER_TYPES = { # Store info about available tower types
     'basic': {'name': 'Basic Chicken', 'cost': Tower.BASE_STATS['basic']['cost'], 'icon': tower_img},
     'bomb':  {'name': 'Bomb Chicken',  'cost': Tower.BASE_STATS['bomb']['cost'],  'icon': tower_img},
     'fire':  {'name': 'Fire Chicken',  'cost': Tower.BASE_STATS['fire']['cost'],  'icon': tower_img},
+    'minigun': {'name': 'MiniGun Chicken', 'cost': Tower.BASE_STATS['minigun']['cost'], 'icon': tower_img},
 }
 
 # --- Game Variables (initialized globally, reset in functions) ---
@@ -383,6 +384,12 @@ def draw_upgrade_panel(tower):
         dot_duration_sec = tower.dot_duration / FPS # Convert duration frames to seconds
         stats_to_display = [
             (f"Duration: {dot_duration_sec:.1f}s", f"Lvl {tower.duration_level}", 'duration'), # Changed path
+            (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
+            (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
+        ]
+    elif tower.tower_type == 'minigun':
+        stats_to_display = [
+            (f"Range: {tower.range}", f"Lvl {tower.range_level}", 'range'),
             (f"Damage: {tower.damage}", f"Lvl {tower.damage_level}", 'damage'),
             (f"Rate: {60 / tower.fire_rate:.1f}/s", f"Lvl {tower.rate_level}", 'rate')
         ]

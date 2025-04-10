@@ -12,6 +12,7 @@ class Tower:
         'basic': {'name':'Basic Chicken', 'range': 150, 'damage': 15, 'rate': 70, 'cost': 100, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
         'bomb':  {'name':'Bomb Chicken',  'range': 100, 'damage': 30, 'rate': 120, 'cost': 125, 'aoe': 160, 'dot_dmg': 0, 'dot_dur': 0},
         'fire':  {'name':'Fire Chicken',  'range': 120, 'damage': 10, 'rate': 100, 'cost': 125, 'aoe': 0, 'dot_dmg': 4, 'dot_dur': 120},
+        'minigun': {'name':'MiniGun Chicken', 'range': 150, 'damage': 5, 'rate': 20, 'cost': 110, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
     }
 
     def __init__(self, x, y, image, tower_type='basic'):
@@ -65,6 +66,8 @@ class Tower:
             return {'aoe', 'damage', 'rate'}
         elif self.tower_type == 'fire':
             return {'duration', 'damage', 'rate'}
+        elif self.tower_type == 'minigun':
+            return {'range', 'damage', 'rate'}
         else:
             return set() # Should not happen
 
@@ -93,6 +96,11 @@ class Tower:
             # DoT duration increases by 10% multiplicatively per duration_level
             self.dot_duration = int(self.base_dot_duration * (1.10 ** (self.duration_level - 1)))
             self.dot_damage = self.base_dot_damage + (self.damage_level - 1) * 2
+        elif self.tower_type == 'minigun':
+            self.range = self.base_range + (self.range_level - 1) * 25
+            self.aoe_radius = 0
+            self.dot_damage = 0
+            self.dot_duration = 0
 
         # Ensure AoE is int
         self.aoe_radius = int(self.aoe_radius)
@@ -111,8 +119,8 @@ class Tower:
                 print(f"Error: Tower missing level attribute '{level_attr}'")
                 return -1
 
-        # --- Locking Logic (ONLY for Basic Tower) --- #
-        if self.tower_type == 'basic':
+        # --- Locking Logic (ONLY for Basic & Minigun Tower) --- #
+        if self.tower_type == 'basic' or self.tower_type == 'minigun':
             # 1. Is this path explicitly locked?
             if stat_type in self.locked_paths:
                 return -2 # Locked
@@ -121,7 +129,7 @@ class Tower:
             if self.primary_path and stat_type != self.primary_path:
                 if current_level >= Tower.SECONDARY_MAX_LEVEL:
                     return -2 # Locked (Secondary path cap)
-        # --- End Basic Locking Logic --- #
+        # --- End Basic/Minigun Locking Logic --- #
 
         # --- Check Max Level (Applies to all types) --- #
         if stat_type == self.primary_path and current_level >= max_level_for_path:
@@ -184,28 +192,32 @@ class Tower:
         # --- Set Primary Path (Applies to all types, used for headband) --- #
         available_paths = self._get_relevant_paths()
         paths_at_lvl_2_or_more = {st for st in available_paths if getattr(self, st + '_level', 1) >= 2}
+        # Choose primary path at level 3, unless already chosen
         if new_level == 3 and not self.primary_path:
-            self.primary_path = stat_type
-            print(f"Primary path chosen: {stat_type.upper()} (Determines headband)")
-        # --- End Set Primary Path --- #
+            # Ensure the stat being upgraded is a valid primary path for this tower
+            if stat_type in available_paths:
+                self.primary_path = stat_type
+                print(f"Primary path chosen: {stat_type.upper()} (Determines headband)")
 
-        # --- Locking Logic (ONLY for Basic Tower) --- #
-        if self.tower_type == 'basic':
+        # --- Locking Logic (ONLY for Basic & Minigun Tower) --- #
+        if self.tower_type == 'basic' or self.tower_type == 'minigun': # Apply locking to minigun too
             # 1. Lock third path when two paths reach level 2
             if len(paths_at_lvl_2_or_more) == 2 and self.primary_path is None:
-                third_path = list(available_paths - paths_at_lvl_2_or_more)[0]
-                if third_path not in self.locked_paths:
-                    self.locked_paths.add(third_path)
-                    print(f"Locked third path: {third_path.upper()} at Level 1.")
+                # Check if there are exactly 3 available paths before locking
+                if len(available_paths) == 3:
+                    third_path = list(available_paths - paths_at_lvl_2_or_more)[0]
+                    if third_path not in self.locked_paths:
+                        self.locked_paths.add(third_path)
+                        print(f"Locked third path: {third_path.upper()} at Level 1.")
 
             # 2. Lock secondary path when primary is chosen at level 3
             if self.primary_path == stat_type and new_level == 3:
-                secondary_path_candidates = paths_at_lvl_2_or_more - {self.primary_path}
+                secondary_path_candidates = available_paths - {self.primary_path}
                 for other_path in secondary_path_candidates:
                     if other_path not in self.locked_paths:
                         self.locked_paths.add(other_path)
                         print(f"Locked secondary path: {other_path.upper()} at Level {Tower.SECONDARY_MAX_LEVEL}.")
-        # --- End Basic Locking Logic --- #
+        # --- End Basic/Minigun Locking Logic --- #
 
         # --- Set Specialization (Applies to all types) --- #
         if new_level == max_level_for_path and self.specialization is None and self.primary_path == stat_type:
@@ -286,7 +298,12 @@ class Tower:
             headband_color = (0, 0, 0)
             if headband_path == 'range' or headband_path == 'aoe': headband_color = (0, 0, 255)
             elif headband_path == 'damage': headband_color = (255, 0, 0)
-            elif headband_path == 'rate' or headband_path == 'duration': headband_color = (0, 255, 0)
+            elif headband_path == 'rate' or headband_path == 'duration':
+                # Special color for minigun rate path
+                if self.tower_type == 'minigun' and headband_path == 'rate':
+                    headband_color = (255, 255, 0) # Yellow
+                else:
+                    headband_color = (0, 255, 0) # Green
 
             # Draw a small rectangle near the top-center, lowered further
             headband_width = self.rect.width * 0.6
