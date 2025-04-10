@@ -169,6 +169,7 @@ selected_tower = None # Track the currently selected tower
 # Upgrade Button Rects (will be calculated later)
 upgrade_button_rects = {}
 bottom_bar_button_rects = {} # New dictionary for bottom bar
+menu_option_rects = {} # New dictionary for menu option rects
 
 # Wave Settings
 TIME_BETWEEN_WAVES = 10 * FPS
@@ -236,6 +237,9 @@ def start_next_wave():
     print(f"Starting Wave {wave_number} with {enemies_to_spawn_this_wave} enemies.")
 
 def draw_menu():
+    global menu_option_rects # Allow modification of the global dict
+    menu_option_rects = {} # Clear rects each time menu is drawn
+
     # Tile background (optional for menu, could just be solid color)
     for y in range(0, SCREEN_HEIGHT, background_tile.get_height()):
         for x in range(0, SCREEN_WIDTH, background_tile.get_width()):
@@ -249,11 +253,15 @@ def draw_menu():
     screen.blit(title_bg, (SCREEN_WIDTH // 2 - title_bg.get_width() // 2, 150 - 10))
     screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, 150))
 
+    # Draw menu options
+    option_font = pygame.font.Font(None, 74) # Slightly smaller than title
+    start_y = 350
     for i, option in enumerate(menu_options):
-        color = WHITE if i == selected_option else GRAY
-        text = game_font.render(option, True, color)
-        # Adjust positioning
-        screen.blit(text, (SCREEN_WIDTH // 2 - text.get_width() // 2, 400 + i * 120))
+        color = YELLOW if i == selected_option else WHITE
+        text = option_font.render(option, True, color)
+        rect = text.get_rect(center=(SCREEN_WIDTH // 2, start_y + i * 80))
+        screen.blit(text, rect)
+        menu_option_rects[i] = rect # Store the rect with its index
 
 def draw_game_over():
     # Tile background
@@ -555,12 +563,10 @@ while running:
                          print("Returning to Main Menu.")
             elif state == GAME_OVER and event.key == pygame.K_RETURN: state = MENU
             elif state == MENU:
-                if event.key == pygame.K_UP:
+                if event.key == pygame.K_w or event.key == pygame.K_UP:
                     selected_option = (selected_option - 1) % len(menu_options)
-                    print("MENU: UP key pressed") # Re-added diagnostic print
-                elif event.key == pygame.K_DOWN:
+                elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
                     selected_option = (selected_option + 1) % len(menu_options)
-                    print("MENU: DOWN key pressed") # Re-added diagnostic print
                 elif event.key == pygame.K_RETURN:
                     selected_difficulty = menu_options[selected_option]
                     state = GAME
@@ -569,97 +575,111 @@ while running:
         if event.type == pygame.MOUSEBUTTONDOWN:
             clicked_handled = False
             if event.button == 1: # Left Click
-                # 1. Check Bottom Bar Buttons
-                current_preview_type = preview_tower.tower_type if preview_tower else None
-                for tower_key, rect in bottom_bar_button_rects.items():
-                    if rect.collidepoint(mouse_pos):
-                        clicked_handled = True
-                        cost = TOWER_TYPES[tower_key]['cost']
-                        icon_img = TOWER_TYPES[tower_key]['icon']
-                        if player_gold >= cost:
-                            if current_preview_type == tower_key:
-                                preview_tower = None
-                            else:
-                                # Pass correct tower_type when creating preview
-                                preview_tower = Tower(mouse_pos[0], mouse_pos[1], icon_img, tower_key)
-                                selected_tower = None
-                        else:
-                            print(f"Not enough gold for {tower_key} (${cost})")
-                        break
-                # 2. Check Upgrade Panel Buttons
-                if not clicked_handled and selected_tower:
-                    for button_type, rect in upgrade_button_rects.items():
+                # --- Menu State Click Handling --- #
+                if state == MENU:
+                    for index, rect in menu_option_rects.items():
+                        if rect.collidepoint(mouse_pos):
+                            selected_option = index
+                            selected_difficulty = menu_options[selected_option]
+                            state = GAME
+                            reset_game_state()
+                            clicked_handled = True # Mark handled so game state logic isn\'t triggered
+                            break # Exit loop once an option is clicked
+                # --- End Menu State Click Handling --- #
+
+                # --- Game State Click Handling --- #
+                if state == GAME and not clicked_handled: # Only process if not handled by menu
+                    # 1. Check Bottom Bar Buttons
+                    current_preview_type = preview_tower.tower_type if preview_tower else None
+                    for tower_key, rect in bottom_bar_button_rects.items():
                         if rect.collidepoint(mouse_pos):
                             clicked_handled = True
-                            if button_type == 'sell':
-                                # Sell the tower
-                                sell_value = selected_tower.get_sell_value()
-                                player_gold += sell_value
-                                towers.remove(selected_tower)
-                                print(f"Sold tower for ${sell_value}. Gold: {player_gold}")
-                                selected_tower = None
-                            else: # It's an upgrade button
-                                stat_type = button_type
-                                cost = selected_tower.get_upgrade_cost(stat_type)
-                                # Corrected Check: cost >= 0 means it's possible and not max/locked
-                                if cost >= 0:
-                                    if player_gold >= cost:
-                                        # Attempt upgrade
-                                        success, actual_cost = selected_tower.upgrade(stat_type)
-                                        if success:
-                                            player_gold -= actual_cost
-                                            print(f"Upgraded {stat_type}! Gold left: {player_gold}")
-                                        # else: No need for internal fail message here
-                                    else:
-                                        print("Not enough gold!")
-                                elif cost == -1:
-                                    print("Already at max level!")
-                                elif cost == -2:
-                                    print(f"Cannot upgrade {stat_type}: Locked by specialization!")
-                                # else: Should not happen
-                            break # Stop checking buttons
-                # 3. Check Game Area Clicks
-                if not clicked_handled and state == GAME:
-                    if preview_tower: # If building
-                        if mouse_pos[1] < BOTTOM_BAR_Y:
-                            # --- Proximity Check --- #
-                            min_tower_separation = preview_tower.rect.width * 0.75 # Min dist based on tower width
-                            placement_ok = is_placement_valid(mouse_pos, towers, min_tower_separation)
-                            # --- Original Checks --- #
-                            gold_ok = player_gold >= preview_tower.cost
-                            path_ok = not is_on_path(mouse_pos, current_path)
+                            cost = TOWER_TYPES[tower_key]['cost']
+                            icon_img = TOWER_TYPES[tower_key]['icon']
+                            if player_gold >= cost:
+                                if current_preview_type == tower_key:
+                                    preview_tower = None
+                                else:
+                                    # Pass correct tower_type when creating preview
+                                    preview_tower = Tower(mouse_pos[0], mouse_pos[1], icon_img, tower_key)
+                                    selected_tower = None
+                            else:
+                                print(f"Not enough gold for {tower_key} (${cost})")
+                            break
+                    # 2. Check Upgrade Panel Buttons
+                    if not clicked_handled and selected_tower:
+                        for button_type, rect in upgrade_button_rects.items():
+                            if rect.collidepoint(mouse_pos):
+                                clicked_handled = True
+                                if button_type == 'sell':
+                                    # Sell the tower
+                                    sell_value = selected_tower.get_sell_value()
+                                    player_gold += sell_value
+                                    towers.remove(selected_tower)
+                                    print(f"Sold tower for ${sell_value}. Gold: {player_gold}")
+                                    selected_tower = None
+                                else: # It's an upgrade button
+                                    stat_type = button_type
+                                    cost = selected_tower.get_upgrade_cost(stat_type)
+                                    # Corrected Check: cost >= 0 means it's possible and not max/locked
+                                    if cost >= 0:
+                                        if player_gold >= cost:
+                                            # Attempt upgrade
+                                            success, actual_cost = selected_tower.upgrade(stat_type)
+                                            if success:
+                                                player_gold -= actual_cost
+                                                print(f"Upgraded {stat_type}! Gold left: {player_gold}")
+                                            # else: No need for internal fail message here
+                                        else:
+                                            print("Not enough gold!")
+                                    elif cost == -1:
+                                        print("Already at max level!")
+                                    elif cost == -2:
+                                        print(f"Cannot upgrade {stat_type}: Locked by specialization!")
+                                    # else: Should not happen
+                                break # Stop checking buttons
+                    # 3. Check Game Area Clicks
+                    if not clicked_handled and state == GAME:
+                        if preview_tower: # If building
+                            if mouse_pos[1] < BOTTOM_BAR_Y:
+                                # --- Proximity Check --- #
+                                min_tower_separation = preview_tower.rect.width * 0.75 # Min dist based on tower width
+                                placement_ok = is_placement_valid(mouse_pos, towers, min_tower_separation)
+                                # --- Original Checks --- #
+                                gold_ok = player_gold >= preview_tower.cost
+                                path_ok = not is_on_path(mouse_pos, current_path)
 
-                            if gold_ok and path_ok and placement_ok:
-                                towers.append(Tower(mouse_pos[0], mouse_pos[1], preview_tower.image, preview_tower.tower_type))
-                                player_gold -= preview_tower.cost
-                                preview_tower = None
+                                if gold_ok and path_ok and placement_ok:
+                                    towers.append(Tower(mouse_pos[0], mouse_pos[1], preview_tower.image, preview_tower.tower_type))
+                                    player_gold -= preview_tower.cost
+                                    preview_tower = None
+                                else:
+                                    # Give specific feedback
+                                    reason = []
+                                    if not gold_ok: reason.append("insufficient gold")
+                                    if not path_ok: reason.append("on path")
+                                    if not placement_ok: reason.append("too close to another tower")
+                                    print(f"Cannot place tower here ({', '.join(reason)}).")
                             else:
-                                # Give specific feedback
-                                reason = []
-                                if not gold_ok: reason.append("insufficient gold")
-                                if not path_ok: reason.append("on path")
-                                if not placement_ok: reason.append("too close to another tower")
-                                print(f"Cannot place tower here ({', '.join(reason)}).")
+                                 print("Cannot place tower in UI area.")
+                        # If not building, try selecting existing tower
                         else:
-                             print("Cannot place tower in UI area.")
-                    # If not building, try selecting existing tower
-                    else:
-                        # Check if click is outside the bottom bar area
-                        if mouse_pos[1] < BOTTOM_BAR_Y:
-                            clicked_tower = None
-                            for tower in towers:
-                                if tower.rect.collidepoint(mouse_pos):
-                                    clicked_tower = tower
-                                    break
-                            # Toggle selection
-                            if clicked_tower and clicked_tower == selected_tower:
-                                selected_tower = None # Deselect if clicking selected tower again
+                            # Check if click is outside the bottom bar area
+                            if mouse_pos[1] < BOTTOM_BAR_Y:
+                                clicked_tower = None
+                                for tower in towers:
+                                    if tower.rect.collidepoint(mouse_pos):
+                                        clicked_tower = tower
+                                        break
+                                # Toggle selection
+                                if clicked_tower and clicked_tower == selected_tower:
+                                    selected_tower = None # Deselect if clicking selected tower again
+                                else:
+                                    selected_tower = clicked_tower # Select new or different tower
+                                if selected_tower:
+                                    print(f"Selected Tower at {selected_tower.rect.center}")
                             else:
-                                selected_tower = clicked_tower # Select new or different tower
-                            if selected_tower:
-                                print(f"Selected Tower at {selected_tower.rect.center}")
-                        else:
-                            selected_tower = None # Clicking UI deselects tower
+                                selected_tower = None # Clicking UI deselects tower
             # --- Right Click --- #
             elif event.button == 3:
                  if preview_tower: preview_tower = None; print("Build cancelled.")
