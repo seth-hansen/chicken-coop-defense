@@ -1,4 +1,5 @@
 import pygame
+# import random # Removed random import
 
 # Constants
 DEFAULT_SPEED = 500 # Pixels per second
@@ -29,7 +30,7 @@ class Projectile:
 
         # Bomb specific visual effect timer
         self.explosion_timer = 0
-        self.explosion_duration = 15 # Frames for explosion visual
+        self.explosion_duration = 8 # Frames for explosion visual (Halved from 15)
         self.explosion_pos = None
 
         # --- Type-Specific Attributes (Calculated from tower) ---
@@ -70,7 +71,7 @@ class Projectile:
     def move(self, time_scale=1.0, enemies_list=None):
         if not self.is_active: return
         if self.explosion_timer > 0: # Handle explosion visual countdown
-            self.explosion_timer -= time_scale
+            self.explosion_timer -= time_scale # Reverted: Scales with game speed
             if self.explosion_timer <= 0:
                 self.is_active = False # Deactivate after explosion visual ends
             return # Don't move during explosion visual

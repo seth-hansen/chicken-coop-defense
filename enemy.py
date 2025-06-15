@@ -21,45 +21,75 @@ ENEMY_IMAGES = {
 }
 
 class Enemy:
-    def __init__(self, path, wave_number, image, enemy_type='unknown'):
+    def __init__(self, path, wave_number, image, enemy_type='unknown', scale=1.0, health_multiplier=1.0):
         self.path = path
-        self.image = image
+        original_image = image
         self.enemy_type = enemy_type
         self.float_x, self.float_y = path[0]
+
+        # Scale image if needed
+        if scale != 1.0:
+            original_width, original_height = original_image.get_size()
+            new_width = int(original_width * scale)
+            new_height = int(original_height * scale)
+            try:
+                self.image = pygame.transform.smoothscale(original_image, (new_width, new_height))
+            except Exception as e:
+                print(f"Warning: Could not scale enemy image: {e}. Using original.")
+                self.image = original_image # Fallback to original
+        else:
+            self.image = original_image
+
         self.rect = self.image.get_rect(center=(self.float_x, self.float_y))
 
-        # Base stats for Raccoon (default)
-        raccoon_base_speed = 0.5
-        raccoon_base_max_health = 90
-        raccoon_reward = 12
-        raccoon_points_value = 6
-
-        # Assign stats based on type
+        # Determine base health (always use raccoon as reference for multiplier)
+        raccoon_base_max_health = 90 # Keep this reference
+        base_max_health = 0
         if enemy_type == 'cat':
-            self.base_speed = raccoon_base_speed * 1.2 # Cats are faster
-            self.base_max_health = int(raccoon_base_max_health * 1.5) # Cats have 1.5x health
-            self.reward = int(raccoon_reward * 0.8) # Cats give less reward
-            self.points_value = int(raccoon_points_value * 1.2) # Cats worth more points
-        else: # Raccoon stats
-            self.base_speed = raccoon_base_speed
-            self.base_max_health = raccoon_base_max_health
-            self.reward = raccoon_reward
-            self.points_value = raccoon_points_value
+            # If it's a cat but not a boss multiplier, use cat base health
+            base_max_health = int(raccoon_base_max_health * 1.5) if health_multiplier == 1.0 else raccoon_base_max_health
+        else: # Raccoon or other types
+            base_max_health = raccoon_base_max_health
 
         # Apply wave scaling
-        self.speed = self.base_speed + (wave_number - 1) * 0.03
-        self.max_health = self.base_max_health + (wave_number - 1) * 15 # Keep wave scaling same for both for now
+        scaled_max_health = base_max_health + (wave_number - 1) * 15
+
+        # Apply boss multiplier
+        self.max_health = int(scaled_max_health * health_multiplier)
         self.health = self.max_health
+
+        # --- Speed and Reward (Keep original logic based on type) ---
+        raccoon_base_speed = 0.5
+        raccoon_reward = 12
+        raccoon_points_value = 6
+        if enemy_type == 'cat':
+            self.base_speed = raccoon_base_speed * 1.2
+            self.reward = int(raccoon_reward * 0.8) # Boss cat still gives cat reward?
+            self.points_value = int(raccoon_points_value * 1.2) # Boss cat still gives cat points?
+        else: # Raccoon stats
+            self.base_speed = raccoon_base_speed
+            self.reward = raccoon_reward
+            self.points_value = raccoon_points_value
+        # --- End Speed/Reward ---
+
+        # Apply wave scaling to speed
+        self.speed = self.base_speed + (wave_number - 1) * 0.03
+
+        # Other initializations (path index, flags, etc.)
         self.path_index = 0
         self.is_dead = False
         self.damage_taken_timer = 0
         self.damage_flash_duration = 10
+        # Apply wave-based reward/point increase AFTER base values are set
         self.reward += (wave_number // 5)
         self.points_value += (wave_number - 1)
 
         # Status Effects
         self.dot_effects = [] # List of tuples: (damage_per_second, remaining_seconds, original_duration)
         self.is_burning = False # For visual indicator
+
+        # Add is_boss flag
+        self.is_boss = (health_multiplier > 1.0)
 
     def apply_dot(self, damage_per_second, duration_seconds):
         """Adds a new DoT effect or refreshes the strongest one."""

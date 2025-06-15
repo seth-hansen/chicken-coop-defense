@@ -4,15 +4,14 @@ import math # For upgrade cost calculation
 
 class Tower:
     MAX_LEVEL = 5 # Maximum level for any stat
-    SECONDARY_MAX_LEVEL = 2 # Max level for the secondary chosen path
     SPECIAL_PATH_MAX_LEVEL = 3 # Max level for AoE/Duration paths
 
     # Define base stats per type
     BASE_STATS = {
-        'basic': {'name':'Basic Chicken', 'range': 150, 'damage': 15, 'rate': 70, 'cost': 100, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
-        'bomb':  {'name':'Bomb Chicken',  'range': 100, 'damage': 30, 'rate': 120, 'cost': 125, 'aoe': 160, 'dot_dmg': 0, 'dot_dur': 0},
-        'fire':  {'name':'Fire Chicken',  'range': 120, 'damage': 10, 'rate': 100, 'cost': 125, 'aoe': 0, 'dot_dmg': 4, 'dot_dur': 120},
-        'minigun': {'name':'MiniGun Chicken', 'range': 150, 'damage': 5, 'rate': 20, 'cost': 110, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
+        'basic': {'name':'Basic Chicken', 'range': 175, 'damage': 20, 'rate': 70, 'cost': 100, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 0},
+        'bomb':  {'name':'Bomb Chicken',  'range': 140, 'damage': 30, 'rate': 120, 'cost': 150, 'aoe': 160, 'dot_dmg': 0, 'dot_dur': 0},
+        'fire':  {'name':'Fire Chicken',  'range': 150, 'damage': 5, 'rate': 100, 'cost': 125, 'aoe': 5, 'dot_dmg': 8, 'dot_dur': 180},
+        'minigun': {'name':'MiniGun Chicken', 'range': 150, 'damage': 5, 'rate': 35, 'cost': 200, 'aoe': 0, 'dot_dmg': 0, 'dot_dur': 20},
     }
 
     def __init__(self, x, y, image, tower_type='basic'):
@@ -126,9 +125,11 @@ class Tower:
                 return -2 # Locked
 
             # 2. Is a primary path chosen? If yes, can only upgrade primary beyond secondary cap.
-            if self.primary_path and stat_type != self.primary_path:
-                if current_level >= Tower.SECONDARY_MAX_LEVEL:
-                    return -2 # Locked (Secondary path cap)
+            #    Also applies to minigun
+            # Removed this check - Now allowing two paths to max
+            # if self.primary_path and stat_type != self.primary_path:
+            #     if current_level >= Tower.SECONDARY_MAX_LEVEL:
+            #         return -2 # Locked (Secondary path cap)
         # --- End Basic/Minigun Locking Logic --- #
 
         # --- Check Max Level (Applies to all types) --- #
@@ -200,24 +201,26 @@ class Tower:
                 print(f"Primary path chosen: {stat_type.upper()} (Determines headband)")
 
         # --- Locking Logic (ONLY for Basic & Minigun Tower) --- #
-        if self.tower_type == 'basic' or self.tower_type == 'minigun': # Apply locking to minigun too
-            # 1. Lock third path when two paths reach level 2
-            if len(paths_at_lvl_2_or_more) == 2 and self.primary_path is None:
-                # Check if there are exactly 3 available paths before locking
-                if len(available_paths) == 3:
-                    third_path = list(available_paths - paths_at_lvl_2_or_more)[0]
-                    if third_path not in self.locked_paths:
-                        self.locked_paths.add(third_path)
-                        print(f"Locked third path: {third_path.upper()} at Level 1.")
+        # --- Generalized Locking Logic (Applies to all tower types with 3 paths) --- #
+        # Lock the third path once two paths reach level 2
+        if len(paths_at_lvl_2_or_more) == 2 and self.primary_path is None: # Check primary path ensures this only runs once
+            # Check if there are exactly 3 available paths before locking
+            if len(available_paths) == 3:
+                third_path = list(available_paths - paths_at_lvl_2_or_more)[0]
+                if third_path not in self.locked_paths:
+                    self.locked_paths.add(third_path)
+                    print(f"Locked third path: {third_path.upper()} at Level 1.")
 
             # 2. Lock secondary path when primary is chosen at level 3
-            if self.primary_path == stat_type and new_level == 3:
-                secondary_path_candidates = available_paths - {self.primary_path}
-                for other_path in secondary_path_candidates:
-                    if other_path not in self.locked_paths:
-                        self.locked_paths.add(other_path)
-                        print(f"Locked secondary path: {other_path.upper()} at Level {Tower.SECONDARY_MAX_LEVEL}.")
+            # Removed this section - locking happens when two paths hit L2
+            # if self.primary_path == stat_type and new_level == 3:
+            #     secondary_path_candidates = available_paths - {self.primary_path}
+            #     for other_path in secondary_path_candidates:
+            #         if other_path not in self.locked_paths:
+            #             self.locked_paths.add(other_path)
+            #             print(f"Locked secondary path: {other_path.upper()} at Level {Tower.SECONDARY_MAX_LEVEL}.")
         # --- End Basic/Minigun Locking Logic --- #
+        # --- End Generalized Locking Logic --- #
 
         # --- Set Specialization (Applies to all types) --- #
         if new_level == max_level_for_path and self.specialization is None and self.primary_path == stat_type:

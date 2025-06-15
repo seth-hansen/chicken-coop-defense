@@ -40,6 +40,7 @@ ORANGE = (255, 165, 0) # Added for sell button color
 
 # Define game states
 MENU = 'menu'
+DIFFICULTY_SELECT = 'difficulty_select' # New state
 GAME = 'game'
 GAME_OVER = 'game_over'
 
@@ -146,9 +147,9 @@ TOWER_TYPES = { # Store info about available tower types
 
 # --- Game Variables (initialized globally, reset in functions) ---
 state = MENU
-selected_option = 0
-selected_difficulty = 'Easy'
-difficulty_health = {'Easy': 20, 'Medium': 10, 'Hard': 5}
+selected_option = 0 # Reintroduce
+selected_difficulty = 'Easy' # Default difficulty
+# difficulty_health = {'Easy': 20, 'Medium': 10, 'Hard': 5} # Kept for reset_game_state
 towers = []
 enemies = []
 projectiles = []
@@ -169,14 +170,18 @@ selected_tower = None # Track the currently selected tower
 # Upgrade Button Rects (will be calculated later)
 upgrade_button_rects = {}
 bottom_bar_button_rects = {} # New dictionary for bottom bar
-menu_option_rects = {} # New dictionary for menu option rects
+menu_option_rects = {} # Reintroduce
+start_button_rect = None # Keep for initial start button
+boss_wave_incoming = False # Flag for boss warning UI
 
 # Wave Settings
-TIME_BETWEEN_WAVES = 10 * FPS
-SPAWN_INTERVAL = 1.5 * FPS
+TIME_BETWEEN_WAVES = 5 * FPS # Changed from 10 * FPS
+SPAWN_INTERVAL_WITHIN_GROUP = 0.4 * FPS # Time between enemies in a group (seconds * FPS)
+GROUP_SIZE = 4 # Number of enemies per small group
+TIME_BETWEEN_GROUPS = 1.5 * FPS # Pause between groups (seconds * FPS)
 
 # Menu options
-menu_options = ['Easy', 'Medium', 'Hard']
+menu_options = ['Easy', 'Medium', 'Hard'] # Reintroduce
 
 # --- Game Variables ---
 # ... (state, difficulty, lists, timers etc.)
@@ -188,13 +193,17 @@ def reset_game_state():
     global towers, enemies, projectiles, current_path, player_gold, player_health
     global score, wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave
     global wave_timer, spawn_timer, build_mode, preview_tower, time_scale, selected_tower, coop_rect
+    global enemies_spawned_this_group, is_waiting_between_groups, boss_wave_incoming
+    global selected_option # Need to reset selection potentially
 
     towers = []
     enemies = []
     projectiles = []
     current_path = get_path(SCREEN_WIDTH, PLAYABLE_HEIGHT)
     player_gold = 200
-    player_health = difficulty_health[selected_difficulty]
+    # Use selected_difficulty (defaulted to 'Easy')
+    difficulty_health = {'Easy': 20, 'Medium': 10, 'Hard': 5}
+    player_health = difficulty_health.get(selected_difficulty, 20) # Default to 20 if key missing
     score = 0
     wave_number = 0 # Start at wave 0, will increment to 1 immediately
     enemies_to_spawn_this_wave = 0
@@ -205,6 +214,13 @@ def reset_game_state():
     build_mode = False
     preview_tower = None
     selected_tower = None # Reset selected tower
+
+    # Reset group spawn state
+    enemies_spawned_this_group = 0
+    is_waiting_between_groups = False
+    boss_wave_incoming = False # Reset boss incoming flag
+    selected_option = 0 # Reset menu selection
+
     start_next_wave() # Prepare the first wave
 
     # --- Position the Coop --- #
@@ -215,53 +231,89 @@ def reset_game_state():
         coop_rect.midbottom = (end_x, end_y + coop_rect.height // 8)
     # --- End Coop Position --- #
 
-    print("Game reset.")
+    print("Game reset with difficulty:", selected_difficulty)
 
 def start_next_wave():
     """Sets up variables for the next wave and awards end-of-wave gold."""
     global wave_number, enemies_to_spawn_this_wave, enemies_spawned_this_wave, wave_timer, player_gold
+    global enemies_spawned_this_group, is_waiting_between_groups, spawn_timer # Need spawn_timer
 
     # Award gold for completing the previous wave (if wave_number > 0)
     if wave_number > 0:
         end_of_wave_bonus = 50
+        # Boss wave bonus?
+        if wave_number % 10 == 0:
+            end_of_wave_bonus *= 3 # Triple bonus for boss waves
         player_gold += end_of_wave_bonus
         print(f"Wave {wave_number} cleared! +${end_of_wave_bonus} gold.")
 
     # Prepare next wave
     wave_number += 1
-    enemies_to_spawn_this_wave = 5 + wave_number * 2 # Example: Increase enemies per wave
+    print(f"--- Preparing Wave {wave_number} ---") # Debug Print
+
+    # --- Check for Boss Wave --- #
+    if wave_number % 10 == 0:
+        enemies_to_spawn_this_wave = 1 # Only one boss enemy
+        print(f"BOSS WAVE {wave_number}! Prepare for a tough fight!")
+    else:
+        # Standard wave enemy count
+        base_enemy_count = 5 + wave_number * 2
+        # Double enemies after wave 20
+        if wave_number > 20:
+            enemies_to_spawn_this_wave = base_enemy_count * 2
+            print(f"(Post-Wave 20 Double Spawn!)")
+        else:
+            enemies_to_spawn_this_wave = base_enemy_count
+        print(f"Calculated enemies for wave {wave_number}: {enemies_to_spawn_this_wave}") # Debug Print
+    # --- End Boss Wave Check ---
+
     enemies_spawned_this_wave = 0
     # Ensure wave timer uses the base time, time_scale applied during countdown
     wave_timer = TIME_BETWEEN_WAVES
-    spawn_timer = 0 # Reset within-wave spawn timer
-    print(f"Starting Wave {wave_number} with {enemies_to_spawn_this_wave} enemies.")
+    # Start the first group slightly delayed or immediately? Let's start immediately.
+    spawn_timer = SPAWN_INTERVAL_WITHIN_GROUP # Time until first enemy of first group
+    # Reset group spawn state for the new wave
+    enemies_spawned_this_group = 0
+    is_waiting_between_groups = False
+    print(f"New wave setup: wave_timer={wave_timer}, spawn_timer={spawn_timer}") # Debug Print
 
 def draw_menu():
-    global menu_option_rects # Allow modification of the global dict
-    menu_option_rects = {} # Clear rects each time menu is drawn
+    global start_button_rect, menu_option_rects # Need both now
 
-    # Tile background (optional for menu, could just be solid color)
+    # --- Common Background and Title --- #
+    # Tile background
     for y in range(0, SCREEN_HEIGHT, background_tile.get_height()):
         for x in range(0, SCREEN_WIDTH, background_tile.get_width()):
             screen.blit(background_tile, (x, y))
-
+    # Draw Title
     title_text = game_font.render('Chicken Coop Defense', True, WHITE)
     title_bg = pygame.Surface((title_text.get_width() + 40, title_text.get_height() + 20))
     title_bg.set_alpha(180)
     title_bg.fill(BLACK)
-    # Adjust positioning for larger screen
     screen.blit(title_bg, (SCREEN_WIDTH // 2 - title_bg.get_width() // 2, 150 - 10))
     screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, 150))
+    # --- End Common --- #
 
-    # Draw menu options
-    option_font = pygame.font.Font(None, 74) # Slightly smaller than title
-    start_y = 350
-    for i, option in enumerate(menu_options):
-        color = YELLOW if i == selected_option else WHITE
-        text = option_font.render(option, True, color)
-        rect = text.get_rect(center=(SCREEN_WIDTH // 2, start_y + i * 80))
-        screen.blit(text, rect)
-        menu_option_rects[i] = rect # Store the rect with its index
+    if state == MENU:
+        # --- Draw Initial Start Button --- #
+        start_font = pygame.font.Font(None, 100)
+        start_text = start_font.render("Start", True, YELLOW)
+        start_button_rect = start_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50))
+        screen.blit(start_text, start_button_rect)
+        menu_option_rects = {} # Clear difficulty rects when showing start
+
+    elif state == DIFFICULTY_SELECT:
+        # --- Draw Difficulty Options --- #
+        menu_option_rects = {} # Clear previous rects
+        option_font = pygame.font.Font(None, 74)
+        start_y = 350
+        for i, option in enumerate(menu_options):
+            color = YELLOW if i == selected_option else WHITE
+            text = option_font.render(option, True, color)
+            rect = text.get_rect(center=(SCREEN_WIDTH // 2, start_y + i * 80))
+            screen.blit(text, rect)
+            menu_option_rects[i] = rect # Store the rect with its index
+        start_button_rect = None # Clear start button rect when showing difficulties
 
 def draw_game_over():
     # Tile background
@@ -324,18 +376,61 @@ def draw_game_ui():
     wave_num_text = ui_font.render(f'Wave: {wave_number}', True, WHITE)
     screen.blit(wave_num_text, (10, wave_info_y))
     # Show timer or wave progress
+    show_boss_warning = False # Flag to track if warning is displayed
     if enemies_spawned_this_wave < enemies_to_spawn_this_wave or len(enemies) > 0:
         # Wave in progress
         remaining_text = ui_font.render(f'Enemies: {len(enemies)}/{enemies_spawned_this_wave}/{enemies_to_spawn_this_wave}', True, WHITE)
         screen.blit(remaining_text, (10, wave_info_y + 30))
     else:
         # Between waves
-        timer_seconds = max(0, wave_timer // FPS) # Ensure timer doesn't show negative
+        timer_seconds = max(0, int(wave_timer / FPS)) # Ensure timer doesn't show negative, make int
         next_wave_text = ui_font.render(f'Next wave in: {timer_seconds}s', True, CYAN)
-        screen.blit(next_wave_text, (10, wave_info_y + 30))
+        next_wave_rect = next_wave_text.get_rect(topleft=(10, wave_info_y + 30))
+        screen.blit(next_wave_text, next_wave_rect)
+        # Boss Warning - Use the global flag set during the countdown
+        if boss_wave_incoming:
+            show_boss_warning = True # Still useful for layout adjustment
+            boss_warning_font = pygame.font.Font(None, 42) # Slightly larger font
+            boss_warning_text = boss_warning_font.render("BOSS INCOMING NEXT ROUND!", True, RED)
+            warning_rect = boss_warning_text.get_rect(topleft=(next_wave_rect.left, next_wave_rect.bottom + 5))
+            screen.blit(boss_warning_text, warning_rect)
+
+    # --- Boss Health Bar --- #
+    boss = None
+    for enemy in enemies:
+        if enemy.is_boss:
+            boss = enemy
+            break # Assume only one boss at a time
+
+    if boss:
+        bar_width = SCREEN_WIDTH * 0.6 # 60% of screen width
+        bar_height = 25
+        bar_x = (SCREEN_WIDTH - bar_width) / 2
+        bar_y = 15 # Position near the top
+        health_ratio = max(0, boss.health / boss.max_health)
+
+        # Background
+        bg_rect = pygame.Rect(bar_x, bar_y, bar_width, bar_height)
+        pygame.draw.rect(screen, BLACK, bg_rect)
+        # Health Fill
+        fill_width = bar_width * health_ratio
+        fill_rect = pygame.Rect(bar_x, bar_y, fill_width, bar_height)
+        pygame.draw.rect(screen, RED, fill_rect)
+        # Border
+        pygame.draw.rect(screen, WHITE, bg_rect, 2)
+        # Text (optional: boss name/health values)
+        boss_label_font = pygame.font.Font(None, 24)
+        boss_label_text = boss_label_font.render(f"BOSS CAT: {int(boss.health)} / {int(boss.max_health)}", True, WHITE)
+        label_rect = boss_label_text.get_rect(center=bg_rect.center)
+        screen.blit(boss_label_text, label_rect)
+    # --- End Boss Health Bar --- #
 
     # Build Mode indicator
-    ui_build_mode_y = wave_info_y + 60
+    ui_build_mode_y = wave_info_y + 60 # Adjust Y pos if boss warning pushed it down?
+    # Let's shift build mode and speed down slightly if warning is present
+    if show_boss_warning and len(enemies) == 0 and enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
+         ui_build_mode_y += 30 # Shift down if warning is showing
+
     if build_mode:
         build_mode_text = ui_font.render('Build Mode (B)', True, CYAN)
         screen.blit(build_mode_text, (10, ui_build_mode_y))
@@ -556,13 +651,16 @@ while running:
                          preview_tower = None
                          print("Build cancelled.")
                      elif selected_tower: # If a tower is selected (showing upgrade panel)
-                         selected_tower = None
+                         seleiiicted_tower = None
                          print("Tower deselected.")
                      else: # Otherwise, go back to the main menu
                          state = MENU
                          print("Returning to Main Menu.")
             elif state == GAME_OVER and event.key == pygame.K_RETURN: state = MENU
             elif state == MENU:
+                if event.key == pygame.K_RETURN:
+                    state = DIFFICULTY_SELECT # Go to difficulty select
+            elif state == DIFFICULTY_SELECT:
                 if event.key == pygame.K_w or event.key == pygame.K_UP:
                     selected_option = (selected_option - 1) % len(menu_options)
                 elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
@@ -571,21 +669,28 @@ while running:
                     selected_difficulty = menu_options[selected_option]
                     state = GAME
                     reset_game_state()
+                elif event.key == pygame.K_ESCAPE:
+                    state = MENU # Go back to main start screen
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             clicked_handled = False
             if event.button == 1: # Left Click
                 # --- Menu State Click Handling --- #
                 if state == MENU:
+                    if start_button_rect and start_button_rect.collidepoint(mouse_pos):
+                        state = DIFFICULTY_SELECT # Go to difficulty select
+                        clicked_handled = True
+                # --- Difficulty Select State Click Handling --- #
+                elif state == DIFFICULTY_SELECT:
                     for index, rect in menu_option_rects.items():
                         if rect.collidepoint(mouse_pos):
-                            selected_option = index
+                            selected_option = index # Update selection visually
                             selected_difficulty = menu_options[selected_option]
                             state = GAME
                             reset_game_state()
-                            clicked_handled = True # Mark handled so game state logic isn\'t triggered
+                            clicked_handled = True
                             break # Exit loop once an option is clicked
-                # --- End Menu State Click Handling --- #
+                # --- End Difficulty Select State Click Handling --- #
 
                 # --- Game State Click Handling --- #
                 if state == GAME and not clicked_handled: # Only process if not handled by menu
@@ -691,18 +796,67 @@ while running:
 
         # Wave Management (apply effective time scale)
         if enemies_spawned_this_wave < enemies_to_spawn_this_wave:
-            spawn_timer -= effective_time_scale # Use effective time scale
+            spawn_timer -= effective_time_scale # Countdown timer
+
             if spawn_timer <= 0:
-                enemy_type = 'cat' if random.random() < 0.4 else 'raccoon'
-                # Need enemy image from ENEMY_IMAGES dict
-                enemy_img_to_use = ENEMY_IMAGES[enemy_type]
-                enemies.append(Enemy(current_path, wave_number, enemy_img_to_use, enemy_type=enemy_type))
-                enemies_spawned_this_wave += 1
-                spawn_timer += SPAWN_INTERVAL
+                if is_waiting_between_groups:
+                    # Finished waiting, start next group
+                    is_waiting_between_groups = False
+                    enemies_spawned_this_group = 0
+                    # Set timer for the first enemy of this new group
+                    spawn_timer = SPAWN_INTERVAL_WITHIN_GROUP
+                    # Need to re-check timer in the same frame if interval is 0
+                    if spawn_timer <= 0: continue # Process the actual spawn below
+                else:
+                    # Spawn one enemy (within a group)
+                    # Determine enemy type and properties
+                    if wave_number % 10 == 0: # Boss Wave (still only 1 total)
+                        # ... (Boss spawning logic - unchanged)
+                        enemy_img = ENEMY_IMAGES['cat']
+                        num_previous_boss_waves = max(0, (wave_number // 10) - 1)
+                        dynamic_health_multiplier = 10.0 * (1.05 ** num_previous_boss_waves)
+                        if selected_difficulty == 'Medium': dynamic_health_multiplier *= 1.3
+                        elif selected_difficulty == 'Hard': dynamic_health_multiplier *= 1.5
+                        new_enemy = Enemy(current_path, wave_number, enemy_img, enemy_type='cat', scale=2.0, health_multiplier=dynamic_health_multiplier)
+                        enemies.append(new_enemy)
+                        print(f"Boss Cat Spawned! (Wave {wave_number}, Health Multi: {dynamic_health_multiplier:.2f}x, Difficulty: {selected_difficulty})")
+                    else: # Regular Wave
+                        enemy_type = 'raccoon' if random.random() < 0.7 else 'cat'
+                        enemy_img = ENEMY_IMAGES[enemy_type]
+                        new_enemy = Enemy(current_path, wave_number, enemy_img, enemy_type=enemy_type)
+                        enemies.append(new_enemy)
+
+                    # Increment counts
+                    enemies_spawned_this_wave += 1
+                    enemies_spawned_this_group += 1
+
+                    # Check if wave is fully spawned
+                    if enemies_spawned_this_wave >= enemies_to_spawn_this_wave:
+                        spawn_timer = float('inf') # Stop spawning
+                    # Check if current group is finished
+                    elif enemies_spawned_this_group >= GROUP_SIZE:
+                        is_waiting_between_groups = True
+                        spawn_timer = TIME_BETWEEN_GROUPS # Set wait time for next group
+                    else:
+                        # Continue current group
+                        spawn_timer = SPAWN_INTERVAL_WITHIN_GROUP # Timer for next enemy in group
+
         elif len(enemies) == 0:
-            wave_timer -= effective_time_scale # Use effective time scale
+            print(f"Between waves: wave_timer = {wave_timer:.1f}") # Debug Print
+            # --- Between waves ---
+            # --- Boss Warning Check (before timer runs out) ---
+            if wave_timer > 0:
+                if (wave_number + 1) % 10 == 0:
+                    boss_wave_incoming = True
+                else:
+                    boss_wave_incoming = False # Ensure it's false if next wave isn't boss
+            # --- End Boss Warning Check ---
+
+            wave_timer -= 1 # Decrement by 1 frame, independent of game speed
             if wave_timer <= 0:
+                print("Wave timer reached zero, calling start_next_wave()") # Debug Print
                 start_next_wave()
+                boss_wave_incoming = False # Reset flag AFTER starting the next wave
 
         # Update Enemies (pass effective time scale)
         for enemy in enemies[:]:
@@ -710,6 +864,7 @@ while running:
             if reached_end:
                 player_health -= 1
             if enemy.is_dead:
+                print(f"Removing defeated enemy: {enemy.enemy_type}") # Debug Print
                 if not reached_end:
                     player_gold += enemy.reward
                     score += enemy.points_value
@@ -738,8 +893,8 @@ while running:
     # --- Drawing --- #
     screen.blit(background_tile, (0, 0))
 
-    if state == MENU:
-        draw_menu()
+    if state == MENU or state == DIFFICULTY_SELECT: # Combined check
+        draw_menu() # draw_menu now handles both states
     elif state == GAME:
         # Draw tiled background and path first
         draw_tiled_background_and_path()
